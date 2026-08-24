@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="Sobre o TreinoFácil — app da Atividade de Sistematização.">
+  <meta name="theme-color" content="#4338CA">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/style.css">
+  <title>Sobre — TreinoFácil</title>
+</head>
+<body data-page="sobre">
+  <main class="content about">
+    <h2 class="page-title">Sobre o TreinoFácil</h2>
+    <p class="page-sub">App híbrido (PWA) desenvolvido para a Atividade de Sistematização.</p>
+
+    <div class="card">
+      <p><strong>O problema.</strong> Quem treina costuma anotar séries, repetições e cargas no papel
+      ou no bloco de notas do celular — vira bagunça, o histórico se perde e fica difícil acompanhar a evolução.</p>
+
+      <p><strong>A solução.</strong> O TreinoFácil centraliza o registro dos exercícios em um app simples e
+      organizado, com cadastro rápido, listagem por dia/grupo, edição e exclusão.</p>
+
+      <p><strong>Público-alvo.</strong> Praticantes de musculação (iniciantes e intermediários) que querem
+      organizar a rotina e acompanhar o progresso.</p>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <p><strong>Como funciona (tecnologia).</strong></p>
+      <ul>
+        <li>App híbrido no formato <strong>PWA</strong> (Progressive Web App): uma única base roda em Android e iOS.</li>
+        <li>Instalável na tela inicial e com funcionamento <strong>offline</strong> (Service Worker + Manifest).</li>
+        <li>As 4 operações <strong>CRUD</strong> com persistência local (os dados continuam após fechar e reabrir o app).</li>
+      </ul>
+      <div class="tag-list">
+        <span class="badge">Create</span>
+        <span class="badge">Read</span>
+        <span class="badge">Update</span>
+        <span class="badge">Delete</span>
+      </div>
+    </div>
+
+    <p class="page-sub" style="margin-top:16px;text-align:center">
+      Programação para Dispositivos Móveis · Atividade de Sistematização
+    </p>
+  </main>
+
+  <script src="js/db.js"></script>
+  <script src="js/ui.js"></script>
+</body>
+</html>

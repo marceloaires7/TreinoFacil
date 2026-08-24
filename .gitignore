@@ -1,0 +1,11 @@
+# Dependências dos testes (16 MB — se baixa de novo com "npm install")
+node_modules/
+package-lock.json
+
+# Configuração local de ferramentas
+.claude/settings.local.json
+
+# Lixo do sistema
+.DS_Store
+Thumbs.db
+*.log

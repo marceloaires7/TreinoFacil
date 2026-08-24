@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="TreinoFácil — registre seus treinos e acompanhe sua evolução.">
+  <title>TreinoFácil</title>
+
+  <!-- É este manifest que faz o Android tratar o site como app: ícone próprio
+       na tela inicial e abertura sem a barra de endereço e sem a barra do
+       navegador. Dentro do Apps Script ele não funcionava, porque a página de
+       nível superior era do Google e o nosso HTML ficava num iframe. -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#4338CA">
+
+  <!-- O iOS ignora o manifest; o modo app vem destas quatro linhas -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="TreinoFácil">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+
+  <!-- Barra de progresso (aparece enquanto a planilha responde) -->
+  <div class="progresso" id="progresso"></div>
+
+  <!-- Aparece quando o app abre offline e mostra o último retrato salvo -->
+  <div class="offline-aviso" id="offlineAviso" hidden>
+    Sem conexão — mostrando os últimos dados salvos. Alterações não serão gravadas.
+  </div>
+
+  <!-- ============ CABEÇALHO ============ -->
+  <header class="app-header">
+    <button class="icon-btn" id="menuBtn" aria-label="Abrir menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <path d="M4 6h16M4 12h16M4 18h16" />
+      </svg>
+    </button>
+    <h1 id="tituloPagina">TreinoFácil</h1>
+  </header>
+
+  <!-- ============ MENU LATERAL ============ -->
+  <div class="backdrop" id="backdrop"></div>
+
+  <aside class="drawer" id="drawer">
+    <div class="drawer-head">
+      <div class="brand">
+        <div class="brand-logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round">
+            <path d="M6.5 6.5v11M3 8.5v7M17.5 6.5v11M21 8.5v7M6.5 12h11" />
+          </svg>
+        </div>
+        <div>
+          <div class="brand-name">TreinoFácil</div>
+          <div class="brand-tag">Registre seus treinos</div>
+        </div>
+      </div>
+    </div>
+
+    <nav>
+      <a class="nav-link" href="#" data-ir="home">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round">
+          <path d="M3 10.5 12 3l9 7.5" />
+          <path d="M5 9.5V21h14V9.5" />
+        </svg>
+        <span>Início</span>
+      </a>
+      <a class="nav-link" href="#" data-ir="agenda">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round">
+          <rect x="3" y="5" width="18" height="16" rx="2" />
+          <path d="M3 9h18M8 3v4M16 3v4" />
+        </svg>
+        <span>Agenda da Semana</span>
+      </a>
+      <a class="nav-link" href="#" data-ir="lista">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round">
+          <path d="M6.5 6.5v11M3 8.5v7M17.5 6.5v11M21 8.5v7M6.5 12h11" />
+        </svg>
+        <span>Meus Treinos</span>
+      </a>
+      <a class="nav-link" href="#" data-ir="cadastro">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 8v8M8 12h8" />
+        </svg>
+        <span>Adicionar Exercício</span>
+      </a>
+      <a class="nav-link" href="#" data-ir="sobre">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 11v5M12 8h.01" />
+        </svg>
+        <span>Sobre o App</span>
+      </a>
+    </nav>
+
+    <div class="drawer-foot">
+      <button class="btn-clear" id="btnApagarTudo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round">
+          <path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" />
+        </svg>
+        Apagar todos os dados
+      </button>
+    </div>
+  </aside>
+
+  <!-- ============ CONTEÚDO (as 4 telas) ============ -->
+  <main class="content">
+
+    <!-- ---------- TELA: INÍCIO ---------- -->
+    <section class="view" id="view-home">
+      <div class="hero">
+        <h2>Bora treinar? 💪</h2>
+        <p>Registre seus exercícios, séries e cargas e acompanhe sua evolução em um só lugar.</p>
+      </div>
+
+      <div class="home-filter">
+        <label for="homeTreino">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round">
+            <path d="M6.5 6.5v11M3 8.5v7M17.5 6.5v11M21 8.5v7M6.5 12h11" />
+          </svg>
+          Treino
+        </label>
+        <select id="homeTreino">
+          <option value="">Todos os treinos</option>
+        </select>
+      </div>
+
+      <div id="homeStats"></div>
+
+      <button class="btn btn-primary btn-block" data-ir="cadastro">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+        Adicionar exercício
+      </button>
+
+      <div id="homeList"></div>
+    </section>
+
+    <!-- ---------- TELA: AGENDA DA SEMANA + CHECKLIST ---------- -->
+    <section class="view" id="view-agenda">
+      <h2 class="page-title">Agenda da Semana</h2>
+      <p class="page-sub">Escolha o treino de cada dia e marque o que já fez.</p>
+
+      <div id="agendaResumo"></div>
+      <div id="agendaDias"></div>
+
+      <button class="btn btn-ghost btn-block" id="btnReiniciar" style="margin-top:18px">
+        Reiniciar marcações da semana
+      </button>
+    </section>
+
+    <!-- ---------- TELA: LISTAGEM (READ + DELETE) ---------- -->
+    <section class="view" id="view-lista">
+      <h2 class="page-title">Meus Treinos</h2>
+      <p class="page-sub">Toque em um exercício para editar ou excluir.</p>
+
+      <div class="toolbar">
+        <div class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.5-3.5" />
+          </svg>
+          <input id="busca" type="search" placeholder="Buscar exercício..." autocomplete="off">
+        </div>
+        <select id="filtroGrupo">
+          <option value="">Todos os grupos</option>
+        </select>
+        <select id="filtroTreino">
+          <option value="">Todos os treinos</option>
+        </select>
+      </div>
+
+      <div id="listaContent"></div>
+    </section>
+
+    <!-- ---------- TELA: FORMULÁRIO (CREATE + UPDATE) ---------- -->
+    <section class="view" id="view-form">
+      <h2 class="page-title" id="formTitulo">Novo Exercício</h2>
+      <p class="page-sub" id="formSub">Preencha os dados do exercício e salve.</p>
+
+      <form id="exForm" class="card" novalidate>
+        <div class="field">
+          <label for="f-nome">Exercício <span class="req">*</span></label>
+          <input type="text" id="f-nome" placeholder="Ex.: Supino reto" maxlength="60" autocomplete="off">
+          <div class="err"></div>
+        </div>
+
+        <div class="field">
+          <label for="f-grupo">Grupo muscular <span class="req">*</span></label>
+          <select id="f-grupo">
+            <option value="">Selecione...</option>
+          </select>
+          <div class="err"></div>
+        </div>
+
+        <div class="field">
+          <label for="f-dia">Treino <span class="req">*</span></label>
+          <select id="f-dia">
+            <option value="">Selecione...</option>
+          </select>
+          <div class="err"></div>
+        </div>
+
+        <div class="row-2">
+          <div class="field">
+            <label for="f-series">Séries <span class="req">*</span></label>
+            <input type="number" id="f-series" min="1" max="20" inputmode="numeric" placeholder="4">
+            <div class="err"></div>
+          </div>
+          <div class="field">
+            <label for="f-repeticoes">Repetições <span class="req">*</span></label>
+            <input type="number" id="f-repeticoes" min="1" max="100" inputmode="numeric" placeholder="12">
+            <div class="err"></div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="f-carga">Carga (kg) <span class="req">*</span></label>
+          <input type="number" id="f-carga" min="0" step="0.5" inputmode="decimal" placeholder="40">
+          <div class="hint">Use 0 para exercícios sem peso (ex.: cardio).</div>
+          <div class="err"></div>
+        </div>
+
+        <div class="field">
+          <label for="f-obs">Observação</label>
+          <textarea id="f-obs" maxlength="160" placeholder="Opcional: técnica, descanso, etc."></textarea>
+        </div>
+
+        <div class="field">
+          <label for="f-link">Vídeo do exercício</label>
+          <input type="url" id="f-link" maxlength="500" inputmode="url" autocomplete="off"
+            placeholder="https://youtube.com/watch?v=...">
+          <div class="hint">Opcional: cole o link de um vídeo que mostre a execução.</div>
+          <div class="err"></div>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn btn-ghost" data-ir="lista">Cancelar</button>
+          <button type="submit" class="btn btn-success" id="btnSalvar">Salvar exercício</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- ---------- TELA: SOBRE ---------- -->
+    <section class="view about" id="view-sobre">
+      <h2 class="page-title">Sobre o TreinoFácil</h2>
+      <p class="page-sub">App web desenvolvido para a Atividade de Sistematização.</p>
+
+      <div class="card">
+        <p><strong>O problema.</strong> Quem treina costuma anotar séries, repetições e cargas no papel ou no
+          bloco de notas do celular — vira bagunça, o histórico se perde e fica difícil acompanhar a evolução.</p>
+
+        <p><strong>A solução.</strong> O TreinoFácil centraliza o registro dos exercícios em um app simples e
+          organizado, com cadastro rápido, listagem por treino/grupo, edição e exclusão — mais a agenda da
+          semana, para saber o que treinar hoje e ir marcando o que já foi feito.</p>
+
+        <p><strong>Público-alvo.</strong> Praticantes de musculação (iniciantes e intermediários) que querem
+          organizar a rotina e acompanhar o progresso.</p>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <p><strong>Como funciona (tecnologia).</strong></p>
+        <ul>
+          <li>Interface responsiva em <strong>HTML, CSS e JavaScript</strong>, servida pelo
+            <strong>Google Apps Script</strong> (<code>HtmlService</code>).</li>
+          <li>Banco de dados em uma <strong>Planilha Google</strong> — cada exercício é uma linha.</li>
+          <li>Cliente e servidor conversam por <strong><code>google.script.run</code></strong>, sem servidor
+            próprio e sem serviços intermediários.</li>
+          <li>As 4 operações <strong>CRUD</strong> gravam direto na planilha: os dados continuam lá depois de
+            fechar o app, e são os mesmos em qualquer dispositivo.</li>
+          <li>Cada exercício pode guardar o <strong>link de um vídeo</strong> mostrando a execução.</li>
+          <li>A <strong>agenda</strong> define qual treino cai em cada dia da semana, e o
+            <strong>checklist</strong> marca o que já foi feito — ele se zera sozinho toda segunda,
+            guardando as semanas anteriores como histórico.</li>
+        </ul>
+        <div class="tag-list">
+          <span class="badge">Create</span>
+          <span class="badge">Read</span>
+          <span class="badge">Update</span>
+          <span class="badge">Delete</span>
+        </div>
+      </div>
+
+      <p class="page-sub" style="margin-top:16px;text-align:center">
+        Programação para Dispositivos Móveis · Atividade de Sistematização
+      </p>
+    </section>
+
+  </main>
+
+  <!-- ============ BOTÃO FLUTUANTE (só na listagem) ============ -->
+  <button class="fab" id="fab" hidden aria-label="Adicionar exercício">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  </button>
+
+  <!-- ============ NAVEGAÇÃO INFERIOR ============ -->
+  <nav class="bottom-nav">
+    <a href="#" data-ir="home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+        stroke-linejoin="round">
+        <path d="M3 10.5 12 3l9 7.5" />
+        <path d="M5 9.5V21h14V9.5" />
+      </svg>
+      <span>Início</span>
+    </a>
+    <a href="#" data-ir="agenda">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+        stroke-linejoin="round">
+        <rect x="3" y="5" width="18" height="16" rx="2" />
+        <path d="M3 9h18M8 3v4M16 3v4" />
+      </svg>
+      <span>Agenda</span>
+    </a>
+    <a href="#" data-ir="lista">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+        stroke-linejoin="round">
+        <path d="M6.5 6.5v11M3 8.5v7M17.5 6.5v11M21 8.5v7M6.5 12h11" />
+      </svg>
+      <span>Treinos</span>
+    </a>
+    <a href="#" class="fab-item" data-ir="cadastro">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 8v8M8 12h8" />
+      </svg>
+      <span>Novo</span>
+    </a>
+    <a href="#" data-ir="sobre">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+        stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 11v5M12 8h.01" />
+      </svg>
+      <span>Sobre</span>
+    </a>
+  </nav>
+
+  <!-- ============ TOAST ============ -->
+  <div class="toast" id="toast"></div>
+
+  <!-- ============ MODAL DE CONFIRMAÇÃO ============ -->
+  <div class="modal-backdrop" id="modalBackdrop">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round">
+          <path d="M12 9v4M12 17h.01" />
+          <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+        </svg>
+      </div>
+      <h3 id="modalTitle">Confirmar</h3>
+      <p id="modalMsg"></p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+        <button class="btn btn-danger" id="modalOk">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+
+</body>
+
+</html>

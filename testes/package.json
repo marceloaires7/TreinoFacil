@@ -1,0 +1,11 @@
+{
+  "name": "treinofacil-testes",
+  "private": true,
+  "description": "Testes locais do TreinoFacil (Apps Script) com a planilha emulada",
+  "scripts": {
+    "test": "node servidor.test.js && node interface.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  }
+}

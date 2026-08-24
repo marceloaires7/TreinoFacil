@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="Edite um exercício no TreinoFácil.">
+  <meta name="theme-color" content="#4338CA">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/style.css">
+  <title>Editar Exercício — TreinoFácil</title>
+</head>
+
+<body data-page="editar">
+  <main class="content">
+    <h2 class="page-title">Editar Exercício</h2>
+    <p class="page-sub">Altere os dados e salve as mudanças.</p>
+
+    <form id="exForm" class="card" novalidate>
+      <div class="field">
+        <label for="f-nome">Exercício <span class="req">*</span></label>
+        <input type="text" id="f-nome" placeholder="Ex.: Supino reto" maxlength="60" autocomplete="off">
+        <div class="err"></div>
+      </div>
+
+      <div class="field">
+        <label for="f-grupo">Grupo muscular <span class="req">*</span></label>
+        <select id="f-grupo">
+          <option value="">Selecione...</option>
+        </select>
+        <div class="err"></div>
+      </div>
+
+      <div class="field">
+        <label for="f-dia">Treino <span class="req">*</span></label>
+        <select id="f-dia">
+          <option value="">Selecione...</option>
+        </select>
+        <div class="err"></div>
+      </div>
+
+      <div class="row-2">
+        <div class="field">
+          <label for="f-series">Séries <span class="req">*</span></label>
+          <input type="number" id="f-series" min="1" max="20" inputmode="numeric" placeholder="4">
+          <div class="err"></div>
+        </div>
+        <div class="field">
+          <label for="f-repeticoes">Repetições <span class="req">*</span></label>
+          <input type="number" id="f-repeticoes" min="1" max="100" inputmode="numeric" placeholder="12">
+          <div class="err"></div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="f-carga">Carga (kg) <span class="req">*</span></label>
+        <input type="number" id="f-carga" min="0" step="0.5" inputmode="decimal" placeholder="40">
+        <div class="hint">Use 0 para exercícios sem peso (ex.: cardio).</div>
+        <div class="err"></div>
+      </div>
+
+      <div class="field">
+        <label for="f-obs">Observação</label>
+        <textarea id="f-obs" maxlength="160" placeholder="Opcional: técnica, descanso, etc."></textarea>
+      </div>
+
+      <div class="form-actions">
+        <a class="btn btn-ghost" href="lista.html">Cancelar</a>
+        <button type="submit" class="btn btn-success">Salvar alterações</button>
+      </div>
+    </form>
+  </main>
+
+  <script src="js/db.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/form.js"></script>
+</body>
+
+</html>
