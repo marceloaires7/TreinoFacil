@@ -1,5 +1,5 @@
 /* Testes do SERVIDOR — Codigo.gs contra uma planilha emulada. */
-/* Carrega o Codigo.gs de verdade (../Codigo.gs) no escopo global,
+/* Carrega o Codigo.gs de verdade (apps-script/Codigo.gs) no escopo global,
    por cima da planilha emulada em planilhaFalsa.js. */
 const fs = require('fs'), path = require('path'), vm = require('vm');
 const RAIZ = path.join(__dirname, '..');
@@ -248,6 +248,48 @@ ok(lerFeitos_().length === 0, 'semana atual zerada');
 __setAgora(new Date('2026-08-31T07:00:00'));
 ok(lerFeitos_().join() === 'Terça', 'a outra semana não foi tocada');
 __setAgora(new Date('2026-08-24T10:00:00'));
+
+console.log('\n== CHECKLIST: célula da semana convertida em Date pelo Sheets ==');
+// O Google Sheets converte o texto '2026-08-24' em data. Quando isso acontece,
+// comparar o valor cru nunca bate — era o bug que deixava o contador em 0.
+const ck = abas['Checklist'];
+const limparChecklist = () => { ck.grade.length = 1; };   // deixa só o cabeçalho
+
+limparChecklist();
+ck.grade[1] = [new Date('2026-08-24T00:00:00'), 'Segunda', '24/08/2026 19:00'];
+ok(lerFeitos_().join() === 'Segunda', 'encontra a marcação mesmo com a célula como Date');
+
+ck.grade[2] = ['2026-08-24', 'Quarta', '26/08/2026 20:00'];
+ok(lerFeitos_().sort().join() === 'Quarta,Segunda', 'lê Date e texto misturados na mesma aba');
+
+ck.grade[3] = [new Date('2026-08-31T00:00:00'), 'Terça', '31/08/2026 07:00'];
+ok(lerFeitos_().length === 2, 'e ignora a semana seguinte (Date de outra semana)');
+
+console.log('\n== CHECKLIST: linhas duplicadas de planilha antiga ==');
+// Enquanto o bug existia, cada clique gravava uma linha nova.
+limparChecklist();
+ck.grade[1] = [new Date('2026-08-24T00:00:00'), 'Segunda', '24/08/2026 19:00'];
+ck.grade[2] = [new Date('2026-08-24T00:00:00'), 'Segunda', '24/08/2026 19:05'];
+ck.grade[3] = ['2026-08-24', 'Segunda', '24/08/2026 19:07'];
+ok(lerFeitos_().length === 1, '3 linhas do mesmo dia contam como 1: ' + JSON.stringify(lerFeitos_()));
+
+marcarDia('Segunda', true);
+ok(ck.getLastRow() === 4, 'marcar de novo não acrescenta uma quarta linha');
+
+marcarDia('Segunda', false);
+ok(lerFeitos_().length === 0, 'desmarcar limpa o dia');
+ok(ck.getLastRow() === 1, 'e apaga TODAS as duplicatas, não só a primeira');
+
+console.log('\n== CHECKLIST: ciclo normal depois da correção ==');
+limparChecklist();
+marcarDia('Segunda', true);
+marcarDia('Quarta', true);
+ok(lerFeitos_().sort().join() === 'Quarta,Segunda', 'marca dois dias');
+ok(ck.getLastRow() === 3, 'uma linha por dia, sem duplicar');
+ok(chaveDaCelula_(ck.grade[1][0]) === '2026-08-24', 'a semana gravada é a corrente');
+marcarDia('Segunda', false);
+ok(lerFeitos_().join() === 'Quarta', 'desmarcar tira só o dia certo');
+limparChecklist();
 
 console.log('\n== carregarDados leva agenda e checklist junto ==');
 salvarAgenda('Segunda', 'Treino A');

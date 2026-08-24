@@ -11,7 +11,7 @@
    É o endereço que termina em /exec, o mesmo de antes.
    Implantar > Gerenciar implantações > copiar a URL.
    ----------------------------------------------------------- */
-const API = 'https://script.google.com/macros/s/AKfycbzmSp-gfCsYt1s7Vp_eKuEMsSDEZF8HGf7IvbsfSPpne9vSteDvv75nzSVxPPpSMBQQwA/exec';
+const API = 'https://script.google.com/macros/s/AKfycbzvCC0TLNaqaiCIIDicsXXSFj85u_sDNfEXNyBUp48x83WNU-oo-l9nrI_bFpnqAUFMew/exec';
 
 /* Onde fica o último retrato da planilha, para o app abrir offline */
 const CHAVE_CACHE = 'treinofacil:ultimosDados';
@@ -24,7 +24,8 @@ const ICONS = {
   edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4 18 8M3 21l4-1 11-11-3-3L4 17l-1 4z"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
-  play: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5z"/></svg>'
+  play: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5z"/></svg>',
+  seta: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>'
 };
 
 
@@ -329,6 +330,26 @@ function renderAgendaDias() {
   root.querySelectorAll('[data-dia-feito]').forEach(botao =>
     botao.addEventListener('click', () => alternarFeito(botao.getAttribute('data-dia-feito')))
   );
+  root.querySelectorAll('[data-dia-ver]').forEach(botao =>
+    botao.addEventListener('click', () => verTreino(botao.getAttribute('data-dia-ver')))
+  );
+}
+
+/**
+ * Abre "Meus Treinos" já filtrado no treino daquele dia.
+ * Zera busca e grupo para o usuário ver o treino inteiro, e sincroniza os
+ * campos da barra de filtros para a tela não mentir sobre o que está mostrando.
+ */
+function verTreino(treino) {
+  App.busca = '';
+  App.filtroGrupo = '';
+  App.filtroTreino = treino;
+
+  document.getElementById('busca').value = '';
+  document.getElementById('filtroGrupo').value = '';
+  document.getElementById('filtroTreino').value = treino;
+
+  irPara('lista');
 }
 
 function cardDiaHTML(dia) {
@@ -361,6 +382,12 @@ function cardDiaHTML(dia) {
     ICONS.check + '</button>'
     : '';
 
+  // Só faz sentido abrir o treino se ele tiver exercícios
+  const verTreino = quantos > 0
+    ? '<button class="btn-ver-treino" data-dia-ver="' + escapeHtml(treino) + '">' +
+    'Ver treino' + ICONS.seta + '</button>'
+    : '';
+
   return '<div class="' + classes.join(' ') + '">' +
     '<div class="dia-topo">' +
     '<div class="dia-nome">' + escapeHtml(dia) + '</div>' +
@@ -368,7 +395,10 @@ function cardDiaHTML(dia) {
     botao +
     '</div>' +
     '<select data-dia-treino="' + escapeHtml(dia) + '">' + opcoes + '</select>' +
+    '<div class="dia-rodape">' +
     '<div class="dia-meta">' + meta + '</div>' +
+    verTreino +
+    '</div>' +
     '</div>';
 }
 

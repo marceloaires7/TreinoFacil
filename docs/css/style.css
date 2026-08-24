@@ -1116,10 +1116,56 @@ body {
   box-shadow: 0 0 0 3px rgba(67, 56, 202, .15);
 }
 
+.dia-rodape {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+}
+
 .dia-meta {
   font-size: .8rem;
   color: var(--muted);
   margin-top: 8px;
+}
+
+.dia-rodape .dia-meta {
+  margin-top: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Botão que abre a listagem já filtrada no treino do dia */
+.btn-ver-treino {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--primary);
+  background: var(--surface);
+  color: var(--primary);
+  font-family: inherit;
+  font-size: .82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-ver-treino svg {
+  width: 15px;
+  height: 15px;
+}
+
+.btn-ver-treino:active {
+  background: var(--primary-light);
+}
+
+.dia-card.feito .btn-ver-treino {
+  border-color: var(--success);
+  color: var(--success);
 }
 
 .dia-meta.alerta {

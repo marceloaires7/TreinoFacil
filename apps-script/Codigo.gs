@@ -323,6 +323,18 @@ function inicioDaSemana_(data) {
   return d;
 }
 
+/**
+ * Normaliza a chave de semana lida da planilha.
+ * O Sheets pode ter convertido o texto '2026-08-24' em Date; se comparar
+ * o valor cru, nada bate e o checklist nunca acha as próprias marcações.
+ */
+function chaveDaCelula_(valor) {
+  if (Object.prototype.toString.call(valor) === '[object Date]') {
+    return Utilities.formatDate(valor, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+  return String(valor == null ? '' : valor).trim();
+}
+
 /** Chave da semana atual, no formato 'aaaa-mm-dd' (ordenável). */
 function chaveSemana_() {
   return Utilities.formatDate(inicioDaSemana_(new Date()), Session.getScriptTimeZone(), 'yyyy-MM-dd');
@@ -555,18 +567,20 @@ function salvarAgenda(dia, treino) {
    Desmarcar apaga a linha. Semanas anteriores ficam guardadas.
    =========================================================== */
 
-/** Linha (1-based) da marcação, ou -1. */
-function acharMarca_(aba, semana, dia) {
+/** Todas as linhas (1-based) que marcam aquele dia naquela semana. */
+function acharMarcas_(aba, semana, dia) {
   var ultima = aba.getLastRow();
-  if (ultima < 2) return -1;
+  if (ultima < 2) return [];
 
   var valores = aba.getRange(2, 1, ultima - 1, 2).getValues();
+  var linhas = [];
   for (var i = 0; i < valores.length; i++) {
-    if (String(valores[i][0]).trim() === semana && String(valores[i][1]).trim() === dia) {
-      return i + 2;
+    if (chaveDaCelula_(valores[i][0]) === semana &&
+        String(valores[i][1]).trim() === dia) {
+      linhas.push(i + 2);
     }
   }
-  return -1;
+  return linhas;
 }
 
 /** Dias já concluídos NESTA semana, ex.: ['Segunda', 'Quarta']. */
@@ -576,23 +590,36 @@ function lerFeitos_() {
   var ultima = aba.getLastRow();
   if (ultima < 2) return [];
 
+  var vistos = {};
   return aba.getRange(2, 1, ultima - 1, 2).getValues()
-    .filter(function (linha) { return String(linha[0]).trim() === semana; })
+    .filter(function (linha) { return chaveDaCelula_(linha[0]) === semana; })
     .map(function (linha) { return String(linha[1]).trim(); })
-    .filter(function (dia) { return DIAS_SEMANA.indexOf(dia) >= 0; });
+    .filter(function (dia) {
+      // Sem repetidos: uma planilha antiga pode ter linhas duplicadas
+      if (DIAS_SEMANA.indexOf(dia) < 0 || vistos[dia]) return false;
+      vistos[dia] = true;
+      return true;
+    });
 }
 
 function marcarSemTrava_(dia) {
   var aba = getAbaChecklist_();
   var semana = chaveSemana_();
-  if (acharMarca_(aba, semana, dia) > 0) return;   // já estava marcado
+  if (acharMarcas_(aba, semana, dia).length > 0) return;   // já estava marcado
+
   aba.appendRow([semana, dia, agora_()]);
+
+  // Trava a coluna da semana como TEXTO, para o Sheets não reinterpretar
+  // '2026-08-24' como data na próxima leitura.
+  aba.getRange(aba.getLastRow(), 1).setNumberFormat('@');
 }
 
 function desmarcarSemTrava_(dia) {
   var aba = getAbaChecklist_();
-  var linha = acharMarca_(aba, chaveSemana_(), dia);
-  if (linha > 0) aba.deleteRow(linha);
+  var linhas = acharMarcas_(aba, chaveSemana_(), dia);
+  // De baixo para cima: apagar de cima muda o número das linhas de baixo
+  linhas.sort(function (a, b) { return b - a; })
+    .forEach(function (linha) { aba.deleteRow(linha); });
 }
 
 /** Marca ou desmarca um dia da semana atual. Devolve a lista atualizada. */

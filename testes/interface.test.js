@@ -17,8 +17,10 @@ const CHAVE_CACHE = 'treinofacil:ultimosDados';
 let html = fs.readFileSync(path.join(RAIZ, 'docs', 'index.html'), 'utf8');
 let appJs = fs.readFileSync(path.join(RAIZ, 'docs', 'js', 'app.js'), 'utf8');
 
-if (!/const API = 'COLE_AQUI/.test(appJs)) {
-  throw new Error('o placeholder da URL da API sumiu do docs/js/app.js');
+// Troca a URL real pela falsa, seja ela o placeholder ou já a do usuário —
+// o teste tem que rodar igual antes e depois de o projeto ser configurado.
+if (!/const API = '[^']*';/.test(appJs)) {
+  throw new Error('nao achei a linha "const API = ..." no docs/js/app.js');
 }
 appJs = appJs.replace(/const API = '[^']*';/, "const API = '" + API_FALSA + "';");
 
@@ -330,6 +332,60 @@ function ok(cond, msg) {
   ok(lerFeitos_().length === 0, 'confirmar limpa as marcações');
   ok(lerAgenda_()['Segunda'] === 'Treino A', 'mas a agenda em si continua montada');
   ok(txt('#agendaResumo').indexOf('0 de 2 treinos feitos') >= 0, 'placar zerado: ' + txt('#agendaResumo'));
+
+  console.log('\n== VER TREINO: botão que abre o treino do dia ==');
+  ok(!!cardDia('Segunda').querySelector('.btn-ver-treino'), 'dia com treino tem o botão "Ver treino"');
+  await escolher('Quinta', 'Treino E');
+  ok(!cardDia('Quinta').querySelector('.btn-ver-treino'),
+    'treino sem nenhum exercício não mostra o botão (não adianta abrir vazio)');
+  ok(!cardDia('Terça').querySelector('.btn-ver-treino'), 'dia de descanso também não mostra');
+  await escolher('Quinta', '');
+
+  cardDia('Segunda').querySelector('.btn-ver-treino').click();
+  await calma();
+  ok(visivel('view-lista'), 'o botão leva para Meus Treinos');
+  ok($('#filtroTreino').value === 'Treino A', 'com o filtro já em Treino A: ' + $('#filtroTreino').value);
+  ok($('#busca').value === '' && $('#filtroGrupo').value === '', 'e busca/grupo zerados');
+  const listados = [...doc.querySelectorAll('#listaContent .ex-card')]
+    .map(c => c.querySelector('.ex-name').textContent);
+  ok(listados.length === 1 && listados[0] === 'Supino reto',
+    'mostrando só os exercícios do Treino A: ' + listados.join(', '));
+
+  // Um treino com mais de um exercício, para garantir que não é coincidência
+  doc.querySelector('.bottom-nav a[data-ir="agenda"]').click(); await calma();
+  cardDia('Quarta').querySelector('.btn-ver-treino').click(); await calma();
+  ok($('#filtroTreino').value === 'Treino B', 'agora filtrado em Treino B');
+  ok(doc.querySelectorAll('#listaContent .ex-card').length === 2, 'Treino B tem 2 exercícios');
+
+  // Deixa a listagem limpa para os testes seguintes
+  $('#filtroTreino').value = '';
+  $('#filtroTreino').dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+  await calma();
+
+  console.log('\n== CHECKLIST: abrir o app com a semana gravada como Date ==');
+  // Reproduz a planilha real: o Sheets converteu '2026-08-24' em data.
+  // Antes da correção o app abria com o contador em 0 e nada marcado.
+  const ck = abas['Checklist'];
+  ck.grade.length = 1;
+  ck.grade[1] = [new Date('2026-08-24T00:00:00'), 'Segunda', '24/08/2026 19:00'];
+
+  const domCk = new JSDOM(html, opcoesJsdom());
+  await espera(80);
+  const docCk = domCk.window.document;
+  docCk.querySelector('.bottom-nav a[data-ir="agenda"]').click();
+  await espera(40);
+
+  const segCk = [...docCk.querySelectorAll('#agendaDias .dia-card')]
+    .find(c => c.querySelector('.dia-nome').textContent === 'Segunda');
+  ok(!!segCk, 'app abriu na agenda');
+  ok(segCk.classList.contains('feito'), 'Segunda já aparece concluída ao abrir');
+  ok(segCk.querySelector('.check-btn').getAttribute('aria-pressed') === 'true',
+    'com o botão marcado');
+  const placarCk = docCk.getElementById('agendaResumo').textContent;
+  ok(/1 de 2 treinos feitos/.test(placarCk.replace(/\s+/g, ' ')),
+    'e o contador conta a marcação: ' + placarCk.replace(/\s+/g, ' ').trim());
+
+  ck.grade.length = 1;
 
   console.log('\n== ERRO DO SERVIDOR VIRA MENSAGEM NA TELA ==');
   const original = global.criarExercicio;
