@@ -13,8 +13,34 @@
    ----------------------------------------------------------- */
 const API = 'https://script.google.com/macros/s/AKfycbzvCC0TLNaqaiCIIDicsXXSFj85u_sDNfEXNyBUp48x83WNU-oo-l9nrI_bFpnqAUFMew/exec';
 
-/* Onde fica o último retrato da planilha, para o app abrir offline */
+/* Onde fica o último retrato da planilha, para o app abrir offline.
+   O nome do usuário entra na chave: cada conta tem o seu retrato. */
 const CHAVE_CACHE = 'treinofacil:ultimosDados';
+
+/* Onde fica a sessão (token + quem está logado) */
+const CHAVE_SESSAO = 'treinofacil:sessao';
+
+/* -----------------------------------------------------------
+   Sessão: { token, usuario, nome, expiraEm }
+   O token é o que prova ao servidor quem está chamando.
+   ----------------------------------------------------------- */
+const Sessao = {
+  ler() {
+    try {
+      const bruto = localStorage.getItem(CHAVE_SESSAO);
+      const s = bruto ? JSON.parse(bruto) : null;
+      return (s && s.token && s.usuario) ? s : null;
+    } catch (e) {
+      return null;
+    }
+  },
+  salvar(sessao) {
+    try { localStorage.setItem(CHAVE_SESSAO, JSON.stringify(sessao)); } catch (e) { }
+  },
+  limpar() {
+    try { localStorage.removeItem(CHAVE_SESSAO); } catch (e) { }
+  }
+};
 
 /* ---------- Ícones usados no conteúdo gerado por JS ---------- */
 const ICONS = {
@@ -51,7 +77,7 @@ const Servidor = {
       resposta = await fetch(API, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ acao: acao, args: args })
+        body: JSON.stringify({ acao: acao, args: args, token: (Sessao.ler() || {}).token || '' })
       });
     } catch (e) {
       throw new Error('Sem conexão com o servidor.');
@@ -68,7 +94,13 @@ const Servidor = {
       throw new Error('Resposta inesperada do servidor. Confira se a implantação está como "Qualquer pessoa".');
     }
 
-    if (!corpo.ok) throw new Error(corpo.erro || 'Erro no servidor.');
+    if (!corpo.ok) {
+      // Token expirado, adulterado ou conta apagada: volta para o login
+      if (corpo.codigo === 'SESSAO_INVALIDA') {
+        encerrarSessao('Sua sessão expirou. Entre de novo.');
+      }
+      throw new Error(corpo.erro || 'Erro no servidor.');
+    }
     return corpo.dados;
   }
 };
@@ -79,13 +111,17 @@ const Servidor = {
    exigindo internet.
    ----------------------------------------------------------- */
 const Retrato = {
+  chave() {
+    const sessao = Sessao.ler();
+    return CHAVE_CACHE + ':' + (sessao ? sessao.usuario : 'anonimo');
+  },
   salvar(dados) {
-    try { localStorage.setItem(CHAVE_CACHE, JSON.stringify(dados)); }
+    try { localStorage.setItem(Retrato.chave(), JSON.stringify(dados)); }
     catch (e) { /* modo privado ou cota cheia: seguir sem cache */ }
   },
   ler() {
     try {
-      const bruto = localStorage.getItem(CHAVE_CACHE);
+      const bruto = localStorage.getItem(Retrato.chave());
       return bruto ? JSON.parse(bruto) : null;
     } catch (e) {
       return null;
@@ -97,6 +133,8 @@ const Retrato = {
   atualizar() {
     if (!App.diasSemana.length) return;      // ainda não carregou
     Retrato.salvar({
+      usuario: App.usuario,
+      nome: App.nome,
       grupos: App.grupos,
       treinos: App.treinos,
       diasSemana: App.diasSemana,
@@ -120,6 +158,8 @@ function ocupado(ligado) {
    2) ESTADO DO APP (cache em memória dos dados da planilha)
    =========================================================== */
 const App = {
+  usuario: '',
+  nome: '',
   grupos: [],
   treinos: [],
   diasSemana: [],
@@ -137,6 +177,7 @@ const App = {
 };
 
 const VIEWS = {
+  login: { titulo: 'TreinoFácil', secao: 'view-login' },
   home: { titulo: 'TreinoFácil', secao: 'view-home' },
   agenda: { titulo: 'Agenda da Semana', secao: 'view-agenda' },
   lista: { titulo: 'Meus Treinos', secao: 'view-lista' },
@@ -707,7 +748,7 @@ function pedirApagarTudo() {
 
 
 /* ===========================================================
-  10) PARTIDA
+   10) DADOS NA TELA
    =========================================================== */
 function opcoes(valores) {
   return valores.map(v => '<option value="' + escapeHtml(v) + '">' + escapeHtml(v) + '</option>').join('');
@@ -716,11 +757,18 @@ function opcoes(valores) {
 function preencherSelects() {
   const grupos = opcoes(App.grupos);
   const treinos = opcoes(App.treinos);
-  document.getElementById('f-grupo').insertAdjacentHTML('beforeend', grupos);
-  document.getElementById('filtroGrupo').insertAdjacentHTML('beforeend', grupos);
-  document.getElementById('f-dia').insertAdjacentHTML('beforeend', treinos);
-  document.getElementById('filtroTreino').insertAdjacentHTML('beforeend', treinos);
-  document.getElementById('homeTreino').insertAdjacentHTML('beforeend', treinos);
+  // Mantém só a primeira opção (a estática) antes de acrescentar: assim
+  // sair e entrar de novo não duplica a lista.
+  const encher = (id, html) => {
+    const sel = document.getElementById(id);
+    while (sel.options.length > 1) sel.remove(1);
+    sel.insertAdjacentHTML('beforeend', html);
+  };
+  encher('f-grupo', grupos);
+  encher('filtroGrupo', grupos);
+  encher('f-dia', treinos);
+  encher('filtroTreino', treinos);
+  encher('homeTreino', treinos);
 }
 
 function ligarEventos() {
@@ -730,6 +778,13 @@ function ligarEventos() {
   document.getElementById('fab').addEventListener('click', () => irPara('cadastro'));
   document.getElementById('exForm').addEventListener('submit', aoSalvar);
   document.getElementById('btnReiniciar').addEventListener('click', pedirReiniciarSemana);
+
+  // Conta
+  document.getElementById('loginForm').addEventListener('submit', fazerLogin);
+  document.getElementById('btnSair').addEventListener('click', sair);
+  document.getElementById('btnMostrarTrocaSenha').addEventListener('click', () => mostrarTrocaSenha(true));
+  document.getElementById('btnCancelarTrocaSenha').addEventListener('click', () => mostrarTrocaSenha(false));
+  document.getElementById('senhaForm').addEventListener('submit', aoTrocarSenha);
 
   // Qualquer elemento com data-ir navega — inclusive os criados por JS depois
   document.addEventListener('click', ev => {
@@ -759,6 +814,11 @@ function ligarEventos() {
 
 /** Joga o pacote do servidor (ou do retrato local) dentro do App. */
 function aplicarDados(dados) {
+  App.usuario = dados.usuario || (Sessao.ler() || {}).usuario || '';
+  App.nome = dados.nome || App.usuario;
+  document.getElementById('brandUsuario').textContent = 'Olá, ' + App.nome;
+  document.getElementById('contaNome').textContent = App.nome;
+  document.getElementById('contaUsuario').textContent = App.usuario;
   App.grupos = dados.grupos;
   App.treinos = dados.treinos;
   App.diasSemana = dados.diasSemana;
@@ -776,13 +836,130 @@ function registrarServiceWorker() {
   });
 }
 
-async function iniciar() {
-  ligarEventos();
-  registrarServiceWorker();
+/* ===========================================================
+   11) CONTA: entrar, sair, trocar senha
+   =========================================================== */
+
+/** Mostra a tela de login e esconde o resto do app. */
+function mostrarLogin(mensagem) {
+  document.body.classList.add('deslogado');
+  document.getElementById('offlineAviso').hidden = true;
+  const erro = document.getElementById('loginErro');
+  erro.textContent = mensagem || '';
+  erro.hidden = !mensagem;
+  document.getElementById('l-senha').value = '';
+  irPara('login');
+}
+
+async function fazerLogin(ev) {
+  ev.preventDefault();
+  limparErros();
+
+  const usuario = document.getElementById('l-usuario').value.trim();
+  const senha = document.getElementById('l-senha').value;
+  let ok = true;
+  if (!usuario) { setErro('l-usuario', 'Informe o usuário.'); ok = false; }
+  if (!senha) { setErro('l-senha', 'Informe a senha.'); ok = false; }
+  if (!ok) return;
+
+  const botao = document.getElementById('btnEntrar');
+  const erro = document.getElementById('loginErro');
+  botao.disabled = true;
+  erro.hidden = true;
+  ocupado(true);
+  try {
+    const sessao = await Servidor.chamar('login', usuario, senha);
+    Sessao.salvar(sessao);
+    document.getElementById('l-senha').value = '';
+    await carregar();
+  } catch (e) {
+    erro.textContent = e.message;
+    erro.hidden = false;
+  } finally {
+    botao.disabled = false;
+    ocupado(false);
+  }
+}
+
+/** Esquece a sessão e limpa o que estava em memória. */
+function encerrarSessao(mensagem) {
+  Sessao.limpar();
+  App.usuario = '';
+  App.nome = '';
+  App.itens = [];
+  App.agenda = {};
+  App.feitos = [];
+  App.diasSemana = [];
+  App.offline = false;
+  App.editId = null;
+  fecharDrawer();
+  mostrarLogin(mensagem);
+}
+
+function sair() {
+  fecharDrawer();
+  confirmar({
+    titulo: 'Sair da conta?',
+    mensagem: 'Seus dados continuam na planilha. Para ver de novo, basta entrar.',
+    textoOk: 'Sair',
+    aoConfirmar: () => { encerrarSessao(); toast('Você saiu'); }
+  });
+}
+
+function mostrarTrocaSenha(aberto) {
+  const form = document.getElementById('senhaForm');
+  form.hidden = !aberto;
+  document.getElementById('btnMostrarTrocaSenha').hidden = aberto;
+  if (aberto) {
+    form.reset();
+    limparErros();
+    document.getElementById('s-atual').focus();
+  }
+}
+
+async function aoTrocarSenha(ev) {
+  ev.preventDefault();
+  limparErros();
+
+  const atual = document.getElementById('s-atual').value;
+  const nova = document.getElementById('s-nova').value;
+  const confirma = document.getElementById('s-confirma').value;
+  let ok = true;
+  if (!atual) { setErro('s-atual', 'Informe a senha atual.'); ok = false; }
+  if (nova.length < 6) { setErro('s-nova', 'Mínimo de 6 caracteres.'); ok = false; }
+  if (nova !== confirma) { setErro('s-confirma', 'As senhas não conferem.'); ok = false; }
+  if (!ok) return;
+
+  const botao = document.getElementById('btnSalvarSenha');
+  botao.disabled = true;
+  ocupado(true);
+  try {
+    await Servidor.chamar('trocarSenha', atual, nova);
+    toast('Senha alterada!', 'success');
+    mostrarTrocaSenha(false);
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    botao.disabled = false;
+    ocupado(false);
+  }
+}
+
+
+/* ===========================================================
+   12) PARTIDA
+   =========================================================== */
+
+/** Carrega os dados do usuário logado e entra no app. */
+async function carregar() {
+  document.body.classList.remove('deslogado');
+  document.getElementById('offlineAviso').hidden = true;
 
   // Mostra a home já com o indicador de carregamento
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById('view-home').classList.add('active');
   document.getElementById('homeStats').innerHTML = carregandoHTML('Lendo os dados da planilha...');
+  document.getElementById('homeList').innerHTML = '';
 
   ocupado(true);
   try {
@@ -792,7 +969,9 @@ async function iniciar() {
     preencherSelects();
     irPara('home');
   } catch (erro) {
-    // Sem rede, mas com um retrato salvo: abre em modo leitura
+    if (!Sessao.ler()) return;               // a sessão caiu: já estamos no login
+
+    // Sem rede, mas com um retrato salvo deste usuário: abre em modo leitura
     const salvo = Retrato.ler();
     if (salvo) {
       App.offline = true;
@@ -811,6 +990,15 @@ async function iniciar() {
   } finally {
     ocupado(false);
   }
+}
+
+function iniciar() {
+  ligarEventos();
+  registrarServiceWorker();
+
+  // Com sessão salva vai direto para os dados; sem sessão, tela de login
+  if (Sessao.ler()) carregar();
+  else mostrarLogin();
 }
 
 document.addEventListener('DOMContentLoaded', iniciar);

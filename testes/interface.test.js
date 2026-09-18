@@ -12,6 +12,14 @@ vm.runInThisContext(fs.readFileSync(path.join(RAIZ, 'apps-script', 'Codigo.gs'),
 
 const API_FALSA = 'https://exemplo.test/exec';
 const CHAVE_CACHE = 'treinofacil:ultimosDados';
+const CHAVE_SESSAO = 'treinofacil:sessao';
+
+// Duas contas: a maioria dos testes roda como o Marcelo, já logado
+const U = 'marcelo';
+criarUsuario_(U, 'senha-do-marcelo', 'Marcelo');
+criarUsuario_('ana', 'senha-da-ana', 'Ana');
+const SESSAO = login(U, 'senha-do-marcelo');
+const sementeLogado = () => ({ [CHAVE_SESSAO]: JSON.stringify(SESSAO) });
 
 // Monta a página como o navegador veria: o index.html com o app.js embutido
 let html = fs.readFileSync(path.join(RAIZ, 'docs', 'index.html'), 'utf8');
@@ -31,20 +39,22 @@ html = html.replace('<script src="js/app.js"></script>', '<script>' + appJs + '<
 
 /**
  * Opções de uma instância do app.
- *   offline: true  -> todo fetch falha, como num celular sem rede
- *   semente: {chave, valor} -> pré-carrega o localStorage antes do script rodar
+ *   offline: true   -> todo fetch falha, como num celular sem rede
+ *   semente: { chave: valor } -> pré-carrega o localStorage antes do script rodar.
+ *            Por padrão vem com a sessão do Marcelo; passe {} para abrir deslogado.
  */
 function opcoesJsdom(cfg) {
   cfg = cfg || {};
+  const semente = cfg.semente === undefined ? sementeLogado() : cfg.semente;
   return {
     runScripts: 'dangerously',
     url: 'https://treinofacil.test/',      // origem real: sem isso não há localStorage
     beforeParse(window) {
       window.scrollTo = () => { };
 
-      if (cfg.semente) {
-        try { window.localStorage.setItem(cfg.semente.chave, cfg.semente.valor); } catch (e) { }
-      }
+      Object.keys(semente).forEach(chave => {
+        try { window.localStorage.setItem(chave, semente[chave]); } catch (e) { }
+      });
 
       window.fetch = (url, opcoes) => new Promise((resolve, reject) => {
         setTimeout(() => {
@@ -105,7 +115,7 @@ function ok(cond, msg) {
   $('#exForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
   await calma();
   ok(doc.querySelectorAll('.field.invalid').length === 6, 'formulário vazio marcou os 6 campos obrigatórios');
-  ok(listarExercicios().length === 0, 'nada foi gravado na planilha');
+  ok(listarExercicios(U).length === 0, 'nada foi gravado na planilha');
   ok(visivel('view-form'), 'continua no formulário');
 
   console.log('\n== CREATE ==');
@@ -117,8 +127,8 @@ function ok(cond, msg) {
   preencher('Supino reto', 'Peito', 'Treino A', 4, 12, 40, 'Aquecer antes');
   $('#exForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
   await calma();
-  ok(listarExercicios().length === 1, 'gravou 1 linha na planilha');
-  ok(listarExercicios()[0].nome === 'Supino reto', 'nome correto na planilha');
+  ok(listarExercicios(U).length === 1, 'gravou 1 linha na planilha');
+  ok(listarExercicios(U)[0].nome === 'Supino reto', 'nome correto na planilha');
   ok(visivel('view-lista'), 'voltou para a listagem depois de salvar');
   ok(txt('#toast').indexOf('Exercício salvo') >= 0, 'toast de sucesso: ' + txt('#toast'));
   ok(txt('#listaContent').indexOf('Supino reto') >= 0, 'card aparece na lista');
@@ -134,7 +144,7 @@ function ok(cond, msg) {
   };
   await criar('Agachamento livre', 'Pernas', 'Treino B', 4, 10, 60);
   await criar('Puxada frontal', 'Costas', 'Treino A', 3, 12, 50);
-  ok(listarExercicios().length === 3, 'planilha com 3 exercícios');
+  ok(listarExercicios(U).length === 3, 'planilha com 3 exercícios');
   ok(doc.querySelectorAll('#listaContent .ex-card').length === 3, '3 cards renderizados');
 
   console.log('\n== READ: busca e filtros ==');
@@ -161,7 +171,7 @@ function ok(cond, msg) {
   $('#filtroTreino').dispatchEvent(new dom.window.Event('change', { bubbles: true })); await calma();
 
   console.log('\n== UPDATE ==');
-  const idSupino = listarExercicios().find(e => e.nome === 'Supino reto').id;
+  const idSupino = listarExercicios(U).find(e => e.nome === 'Supino reto').id;
   doc.querySelector('[data-editar="' + idSupino + '"]').click(); await calma();
   ok(visivel('view-form') && txt('#formTitulo') === 'Editar Exercício', 'abriu a tela de edição');
   ok($('#f-nome').value === 'Supino reto' && $('#f-carga').value === '40', 'formulário veio preenchido (carga=' + $('#f-carga').value + ')');
@@ -169,9 +179,9 @@ function ok(cond, msg) {
   $('#f-carga').value = '45'; $('#f-nome').value = 'Supino inclinado';
   $('#exForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
   await calma();
-  const atualizado = listarExercicios().find(e => e.id === idSupino);
+  const atualizado = listarExercicios(U).find(e => e.id === idSupino);
   ok(atualizado.carga === 45 && atualizado.nome === 'Supino inclinado', 'planilha atualizada (carga=' + atualizado.carga + ')');
-  ok(listarExercicios().length === 3, 'update não criou linha nova');
+  ok(listarExercicios(U).length === 3, 'update não criou linha nova');
   ok(txt('#listaContent').indexOf('45 kg') >= 0, 'lista já mostra a carga nova');
 
   console.log('\n== DELETE ==');
@@ -180,11 +190,11 @@ function ok(cond, msg) {
   ok(txt('#modalMsg').indexOf('Supino inclinado') >= 0, 'modal cita o exercício: ' + txt('#modalMsg'));
   $('#modalCancel').click(); await calma();
   ok(!$('#modalBackdrop').classList.contains('open'), 'Cancelar fecha o modal');
-  ok(listarExercicios().length === 3, 'Cancelar NÃO excluiu nada');
+  ok(listarExercicios(U).length === 3, 'Cancelar NÃO excluiu nada');
 
   doc.querySelector('[data-excluir="' + idSupino + '"]').click(); await calma();
   $('#modalOk').click(); await calma();
-  ok(listarExercicios().length === 2, 'Confirmar excluiu da planilha');
+  ok(listarExercicios(U).length === 2, 'Confirmar excluiu da planilha');
   ok(txt('#listaContent').indexOf('Supino inclinado') < 0, 'card sumiu da lista');
 
   console.log('\n== HOME reflete os dados ==');
@@ -207,12 +217,12 @@ function ok(cond, msg) {
   ok($('#modalBackdrop').classList.contains('open') && !$('#drawer').classList.contains('open'),
     'Apagar tudo fecha o menu e pede confirmação');
   $('#modalOk').click(); await calma();
-  ok(listarExercicios().length === 0, 'planilha zerada');
+  ok(listarExercicios(U).length === 0, 'planilha zerada');
   ok(visivel('view-lista') && txt('#listaContent').indexOf('Sua lista está vazia') >= 0, 'voltou ao estado vazio');
 
   console.log('\n== CARREGAR EXEMPLOS ==');
   $('#btnExemplos').click(); await calma();
-  ok(listarExercicios().length === 3, 'exemplos gravados na planilha');
+  ok(listarExercicios(U).length === 3, 'exemplos gravados na planilha');
   ok(doc.querySelectorAll('#listaContent .ex-card').length === 3, '3 cards renderizados');
 
   console.log('\n== TELA SOBRE ==');
@@ -240,12 +250,12 @@ function ok(cond, msg) {
   $('#exForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
   await calma();
   ok($('#f-link').closest('.field').classList.contains('invalid'), 'link sem http:// marca erro no campo');
-  ok(listarExercicios().length === 3, 'e nada foi gravado');
+  ok(listarExercicios(U).length === 3, 'e nada foi gravado');
 
   $('#f-link').value = 'https://www.youtube.com/watch?v=ok123';
   $('#exForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
   await calma();
-  const remada = listarExercicios().find(e => e.nome === 'Remada curvada');
+  const remada = listarExercicios(U).find(e => e.nome === 'Remada curvada');
   ok(!!remada && remada.link === 'https://www.youtube.com/watch?v=ok123', 'com http(s) salva o link na planilha');
 
   doc.querySelector('[data-editar="' + remada.id + '"]').click(); await calma();
@@ -253,7 +263,7 @@ function ok(cond, msg) {
   $('#f-link').value = '';
   $('#exForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
   await calma();
-  ok(listarExercicios().find(e => e.id === remada.id).link === '', 'dá para apagar o link editando');
+  ok(listarExercicios(U).find(e => e.id === remada.id).link === '', 'dá para apagar o link editando');
   ok(!cardDe('Remada curvada').querySelector('.ex-video'), 'e o botão some do cartão');
 
   console.log('\n== AGENDA: montar a semana ==');
@@ -279,7 +289,7 @@ function ok(cond, msg) {
   ok(!!cardDia('Segunda').querySelector('.tag-hoje'), 'hoje é Segunda (relógio fixo em 24/08/2026)');
 
   await escolher('Segunda', 'Treino A');
-  ok(lerAgenda_()['Segunda'] === 'Treino A', 'gravou na aba Agenda da planilha');
+  ok(lerAgenda_(U)['Segunda'] === 'Treino A', 'gravou na aba Agenda da planilha');
   ok(!!cardDia('Segunda').querySelector('.check-btn'), 'o dia agendado ganha o botão de marcar');
   ok(cardDia('Segunda').querySelector('.dia-meta').textContent.indexOf('1 exercício') >= 0,
     'conta os exercícios do treino: ' + cardDia('Segunda').querySelector('.dia-meta').textContent);
@@ -288,7 +298,7 @@ function ok(cond, msg) {
   ok(!!cardDia('Quarta').querySelector('.dia-meta .alerta'), 'avisa quando o treino não tem exercício cadastrado');
 
   await escolher('Quarta', 'Treino B');
-  ok(lerAgenda_()['Quarta'] === 'Treino B', 'trocar o treino do dia sobrescreve');
+  ok(lerAgenda_(U)['Quarta'] === 'Treino B', 'trocar o treino do dia sobrescreve');
   ok(cardDia('Terça').querySelector('.dia-meta').textContent === 'Dia de descanso', 'dia sem treino diz "Dia de descanso"');
 
   console.log('\n== CHECKLIST: marcar o treino como feito ==');
@@ -296,7 +306,7 @@ function ok(cond, msg) {
   ok(btnDia('Segunda').getAttribute('aria-pressed') === 'false', 'começa desmarcado');
 
   btnDia('Segunda').click(); await calma();
-  ok(lerFeitos_().join() === 'Segunda', 'gravou na aba Checklist da planilha');
+  ok(lerFeitos_(U).join() === 'Segunda', 'gravou na aba Checklist da planilha');
   ok(btnDia('Segunda').getAttribute('aria-pressed') === 'true', 'botão fica pressionado');
   ok(cardDia('Segunda').classList.contains('feito'), 'cartão ganha o estilo de concluído');
   ok(txt('#agendaResumo').indexOf('1 de 2 treinos feitos') >= 0, 'placar: ' + txt('#agendaResumo'));
@@ -304,33 +314,33 @@ function ok(cond, msg) {
     'barra em 50%: ' + doc.querySelector('#agendaResumo .barra i').style.width);
 
   btnDia('Quarta').click(); await calma();
-  ok(lerFeitos_().length === 2, 'dois dias marcados');
+  ok(lerFeitos_(U).length === 2, 'dois dias marcados');
   ok(doc.querySelector('#agendaResumo .barra i').style.width === '100%', 'barra completa');
 
   btnDia('Segunda').click(); await calma();
-  ok(lerFeitos_().join() === 'Quarta', 'clicar de novo desmarca só aquele dia');
+  ok(lerFeitos_(U).join() === 'Quarta', 'clicar de novo desmarca só aquele dia');
 
   console.log('\n== Virar o dia para Descanso apaga a marcação ==');
-  ok(lerFeitos_().indexOf('Quarta') >= 0, 'quarta está marcada');
+  ok(lerFeitos_(U).indexOf('Quarta') >= 0, 'quarta está marcada');
   await escolher('Quarta', '');
-  ok(lerFeitos_().indexOf('Quarta') < 0, 'virou Descanso e a marcação sumiu da planilha');
+  ok(lerFeitos_(U).indexOf('Quarta') < 0, 'virou Descanso e a marcação sumiu da planilha');
   ok(!cardDia('Quarta').querySelector('.check-btn'), 'e o botão de marcar some do cartão');
 
   console.log('\n== Reiniciar marcações da semana ==');
   await escolher('Quarta', 'Treino B');
   btnDia('Segunda').click(); await calma();
   btnDia('Quarta').click(); await calma();
-  ok(lerFeitos_().length === 2, 'dois dias marcados antes de reiniciar');
+  ok(lerFeitos_(U).length === 2, 'dois dias marcados antes de reiniciar');
 
   $('#btnReiniciar').click(); await calma();
   ok($('#modalBackdrop').classList.contains('open'), 'reiniciar pede confirmação');
   $('#modalCancel').click(); await calma();
-  ok(lerFeitos_().length === 2, 'cancelar não apaga nada');
+  ok(lerFeitos_(U).length === 2, 'cancelar não apaga nada');
 
   $('#btnReiniciar').click(); await calma();
   $('#modalOk').click(); await calma();
-  ok(lerFeitos_().length === 0, 'confirmar limpa as marcações');
-  ok(lerAgenda_()['Segunda'] === 'Treino A', 'mas a agenda em si continua montada');
+  ok(lerFeitos_(U).length === 0, 'confirmar limpa as marcações');
+  ok(lerAgenda_(U)['Segunda'] === 'Treino A', 'mas a agenda em si continua montada');
   ok(txt('#agendaResumo').indexOf('0 de 2 treinos feitos') >= 0, 'placar zerado: ' + txt('#agendaResumo'));
 
   console.log('\n== VER TREINO: botão que abre o treino do dia ==');
@@ -367,7 +377,7 @@ function ok(cond, msg) {
   // Antes da correção o app abria com o contador em 0 e nada marcado.
   const ck = abas['Checklist'];
   ck.grade.length = 1;
-  ck.grade[1] = [new Date('2026-08-24T00:00:00'), 'Segunda', '24/08/2026 19:00'];
+  ck.grade[1] = [new Date('2026-08-24T00:00:00'), 'Segunda', '24/08/2026 19:00', U];
 
   const domCk = new JSDOM(html, opcoesJsdom());
   await espera(80);
@@ -404,7 +414,7 @@ function ok(cond, msg) {
   // digitar isso direto na célula. O cliente precisa se defender ao renderizar.
   const linhaRemada = abas['Exercicios'].grade.find(l => l && l[1] === 'Remada curvada');
   linhaRemada[9] = 'javascript:alert(1)';
-  ok(listarExercicios().find(e => e.nome === 'Remada curvada').link === 'javascript:alert(1)',
+  ok(listarExercicios(U).find(e => e.nome === 'Remada curvada').link === 'javascript:alert(1)',
     'planilha realmente tem o link perigoso');
 
   // Abre o app do zero, agora já com o dado ruim vindo da planilha
@@ -455,13 +465,13 @@ function ok(cond, msg) {
   ok(/req\.method !== 'GET'/.test(sw), 'e não tenta cachear POST (as chamadas à API)');
 
   console.log('\n== OFFLINE: abrir sem rede usando o último retrato ==');
-  const retrato = dom.window.localStorage.getItem(CHAVE_CACHE);
+  const retrato = dom.window.localStorage.getItem(CHAVE_CACHE + ':' + U);
   ok(!!retrato, 'o app foi salvando o retrato da planilha no localStorage');
   ok(JSON.parse(retrato).exercicios.length > 0, 'e o retrato tem exercícios dentro');
 
   const domOff = new JSDOM(html, opcoesJsdom({
     offline: true,
-    semente: { chave: CHAVE_CACHE, valor: retrato }
+    semente: Object.assign(sementeLogado(), { [CHAVE_CACHE + ':' + U]: retrato })
   }));
   await espera(80);
   const docOff = domOff.window.document;
@@ -492,6 +502,127 @@ function ok(cond, msg) {
   const avisoUrl = domSemUrl.window.document.getElementById('homeStats').textContent;
   ok(avisoUrl.indexOf('URL do Apps Script') >= 0,
     'diz exatamente o que falta configurar: ' + avisoUrl.replace(/\s+/g, ' ').trim().slice(0, 90));
+
+  console.log('\n== LOGIN: abrir sem sessão ==');
+  const domL = new JSDOM(html, opcoesJsdom({ semente: {} }));
+  await espera(60);
+  const docL = domL.window.document;
+  const $L = sel => docL.querySelector(sel);
+  const submeterLogin = async (usuario, senha) => {
+    $L('#l-usuario').value = usuario;
+    $L('#l-senha').value = senha;
+    $L('#loginForm').dispatchEvent(new domL.window.Event('submit', { bubbles: true, cancelable: true }));
+    await espera(60);
+  };
+
+  ok($L('#view-login').classList.contains('active'), 'sem sessão, abre na tela de login');
+  ok(docL.body.classList.contains('deslogado'), 'body marcado como deslogado (esconde menu, nav e FAB)');
+  ok(!$L('#view-home').classList.contains('active'), 'a Início NÃO aparece');
+  ok(docL.querySelectorAll('#homeStats .stat').length === 0, 'e nenhum dado foi carregado');
+
+  console.log('\n== LOGIN: campos vazios e senha errada ==');
+  await submeterLogin('', '');
+  ok($L('#l-usuario').closest('.field').classList.contains('invalid'), 'usuário vazio marca erro no campo');
+  ok(domL.window.localStorage.getItem(CHAVE_SESSAO) === null, 'e não salva sessão');
+
+  await submeterLogin('marcelo', 'errada');
+  ok($L('#loginErro').hidden === false && /incorretos/.test($L('#loginErro').textContent),
+    'senha errada mostra a mensagem do servidor: ' + $L('#loginErro').textContent);
+  ok($L('#view-login').classList.contains('active'), 'continua na tela de login');
+  ok(domL.window.localStorage.getItem(CHAVE_SESSAO) === null, 'sem sessão salva');
+
+  console.log('\n== LOGIN: entrar ==');
+  await submeterLogin('  MARCELO ', 'senha-do-marcelo');
+  ok($L('#view-home').classList.contains('active'), 'senha certa leva para a Início');
+  ok(!docL.body.classList.contains('deslogado'), 'body volta ao normal');
+  const sessaoSalva = JSON.parse(domL.window.localStorage.getItem(CHAVE_SESSAO));
+  ok(!!sessaoSalva && sessaoSalva.usuario === 'marcelo' && !!sessaoSalva.token, 'sessão salva no localStorage');
+  ok($L('#brandUsuario').textContent === 'Olá, Marcelo', 'menu lateral mostra quem entrou: ' + $L('#brandUsuario').textContent);
+  ok($L('#l-senha').value === '', 'o campo de senha é limpo depois de entrar');
+  ok(docL.querySelectorAll('#homeStats .stat').length === 4, 'e os dados do Marcelo carregaram');
+
+  console.log('\n== SAIR ==');
+  $L('#menuBtn').click(); await espera(20);
+  $L('#btnSair').click(); await espera(20);
+  ok($L('#modalBackdrop').classList.contains('open'), 'sair pede confirmação');
+  $L('#modalCancel').click(); await espera(20);
+  ok(!!domL.window.localStorage.getItem(CHAVE_SESSAO), 'cancelar mantém a sessão');
+
+  $L('#menuBtn').click(); $L('#btnSair').click(); await espera(20);
+  $L('#modalOk').click(); await espera(40);
+  ok($L('#view-login').classList.contains('active') && docL.body.classList.contains('deslogado'),
+    'confirmar volta para a tela de login');
+  ok(domL.window.localStorage.getItem(CHAVE_SESSAO) === null, 'sessão apagada');
+  ok(!!domL.window.localStorage.getItem(CHAVE_CACHE + ':marcelo'), 'o retrato offline do Marcelo fica (é dele, e é só leitura)');
+
+  console.log('\n== LOGIN de novo na mesma instância: selects não duplicam ==');
+  await submeterLogin('marcelo', 'senha-do-marcelo');
+  ok($L('#view-home').classList.contains('active'), 'entrou de novo');
+  ok($L('#f-grupo').options.length === 9, 'select de grupos continua com 9 opções, não 17');
+  ok($L('#homeTreino').options.length === 6, 'select da home continua com 6 opções');
+
+  console.log('\n== SESSÃO EXPIRADA: token de 31 dias atrás ==');
+  __setAgora(new Date('2026-09-24T10:00:00'));       // o servidor está 31 dias à frente
+  const domExp = new JSDOM(html, opcoesJsdom());     // com a sessão (agora velha) do Marcelo
+  await espera(80);
+  const docExp = domExp.window.document;
+  ok(docExp.getElementById('view-login').classList.contains('active'), 'token vencido cai na tela de login');
+  ok(/expirou/.test(docExp.getElementById('loginErro').textContent),
+    'com o aviso: ' + docExp.getElementById('loginErro').textContent);
+  ok(domExp.window.localStorage.getItem(CHAVE_SESSAO) === null, 'a sessão vencida é descartada');
+  __setAgora(new Date('2026-08-24T10:00:00'));
+
+  console.log('\n== ISOLAMENTO na interface: a Ana entra ==');
+  const domA = new JSDOM(html, opcoesJsdom({ semente: {} }));
+  await espera(60);
+  const docA = domA.window.document;
+  const $A = sel => docA.querySelector(sel);
+  $A('#l-usuario').value = 'ana'; $A('#l-senha').value = 'senha-da-ana';
+  $A('#loginForm').dispatchEvent(new domA.window.Event('submit', { bubbles: true, cancelable: true }));
+  await espera(80);
+
+  ok($A('#view-home').classList.contains('active'), 'Ana entrou');
+  ok($A('#brandUsuario').textContent === 'Olá, Ana', 'menu mostra a Ana');
+  const statsAna = [...docA.querySelectorAll('#homeStats .stat')].map(c => c.querySelector('.num').textContent);
+  ok(statsAna[0] === '0', 'Ana começa com 0 exercícios — não vê os do Marcelo (ele tem ' + listarExercicios(U).length + ')');
+
+  docA.querySelector('.bottom-nav a[data-ir="cadastro"]').click(); await espera(20);
+  $A('#f-nome').value = 'Elevação pélvica'; $A('#f-grupo').value = 'Pernas'; $A('#f-dia').value = 'Treino A';
+  $A('#f-series').value = 3; $A('#f-repeticoes').value = 15; $A('#f-carga').value = 20;
+  $A('#exForm').dispatchEvent(new domA.window.Event('submit', { bubbles: true, cancelable: true }));
+  await espera(60);
+  ok(listarExercicios('ana').map(e => e.nome).join() === 'Elevação pélvica', 'o exercício da Ana foi para a conta dela');
+  ok(!listarExercicios(U).some(e => e.nome === 'Elevação pélvica'), 'e NÃO aparece na conta do Marcelo');
+  ok(docA.querySelectorAll('#listaContent .ex-card').length === 1, 'a lista da Ana mostra só o dela');
+
+  ok(!!domA.window.localStorage.getItem(CHAVE_CACHE + ':ana'), 'retrato offline salvo na chave da Ana');
+  ok(domA.window.localStorage.getItem(CHAVE_CACHE + ':marcelo') === null,
+    'sem tocar na chave do Marcelo (nesta instância ele nunca entrou)');
+
+  console.log('\n== TROCAR SENHA (tela Sobre) ==');
+  docA.querySelector('.bottom-nav a[data-ir="sobre"]').click(); await espera(20);
+  ok($A('#contaNome').textContent === 'Ana' && $A('#contaUsuario').textContent === 'ana', 'cartão Minha conta mostra a Ana');
+  ok($A('#senhaForm').hidden === true, 'o formulário começa escondido');
+  $A('#btnMostrarTrocaSenha').click(); await espera(10);
+  ok($A('#senhaForm').hidden === false && $A('#btnMostrarTrocaSenha').hidden === true, '"Trocar senha" abre o formulário');
+
+  const submeterSenha = async (atual, nova, confirma) => {
+    $A('#s-atual').value = atual; $A('#s-nova').value = nova; $A('#s-confirma').value = confirma;
+    $A('#senhaForm').dispatchEvent(new domA.window.Event('submit', { bubbles: true, cancelable: true }));
+    await espera(60);
+  };
+  await submeterSenha('senha-da-ana', 'nova-123456', 'diferente');
+  ok($A('#s-confirma').closest('.field').classList.contains('invalid'), 'senhas diferentes marcam erro sem chamar o servidor');
+  await submeterSenha('senha-da-ana', '123', '123');
+  ok($A('#s-nova').closest('.field').classList.contains('invalid'), 'senha curta marca erro');
+  await submeterSenha('errada', 'nova-123456', 'nova-123456');
+  ok(/não confere/.test($A('#toast').textContent), 'senha atual errada: erro do servidor no toast');
+  await submeterSenha('senha-da-ana', 'nova-123456', 'nova-123456');
+  ok(/alterada/.test($A('#toast').textContent), 'com tudo certo, toast de sucesso');
+  ok($A('#senhaForm').hidden === true, 'e o formulário fecha');
+  ok(!!login('ana', 'nova-123456').token, 'a senha nova vale no servidor');
+  try { login('ana', 'senha-da-ana'); ok(false, 'senha antiga deveria falhar'); }
+  catch (e) { ok(/incorretos/.test(e.message), 'a senha antiga deixou de valer'); }
 
   console.log(falhas === 0 ? '\nTODOS OS TESTES DE INTERFACE PASSARAM\n' : '\n' + falhas + ' TESTE(S) FALHARAM\n');
   process.exit(falhas === 0 ? 0 : 1);

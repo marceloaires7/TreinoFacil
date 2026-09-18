@@ -33,6 +33,8 @@ querem organizar a rotina e acompanhar o progresso.
   mostrando a execução.
 - **Instalável e offline** — abre em tela cheia, sem as barras do navegador, e
   continua abrindo (em modo leitura) sem internet.
+- **Login com usuário e senha** — cada pessoa tem os próprios exercícios, agenda
+  e checklist na mesma planilha. As contas são criadas pelo dono da planilha.
 
 ---
 
@@ -43,18 +45,18 @@ querem organizar a rotina e acompanhar o progresso.
 | Peça | Onde mora | Papel |
 |------|-----------|-------|
 | **`docs/`** | GitHub Pages | A interface. É um **PWA**: instala na tela inicial com ícone próprio, abre sem as barras do navegador e funciona offline. |
-| **`apps-script/Codigo.gs`** | Google Apps Script | O servidor de dados. Recebe JSON e lê/escreve na **Planilha Google**. |
+| **`apps-script/Codigo.gs`** | Google Apps Script | O servidor de dados. Confere o login, recebe JSON e lê/escreve na **Planilha Google** — sempre filtrando pelo usuário. |
 
 ```
   Celular
      │  instala pela tela inicial (manifest.json)
      ▼
-  GitHub Pages  ──── fetch() POST {acao, args} ────►  Apps Script /exec
-  docs/index.html                                          │  doPost()
-  docs/js/app.js   ◄──── { ok: true, dados } ──────────────┤
-  docs/sw.js (offline)                                     ▼
-  docs/manifest.json                                Planilha Google
-                                          (Exercicios / Agenda / Checklist)
+  GitHub Pages  ─── fetch() POST {acao, args, token} ───►  Apps Script /exec
+  docs/index.html                                             │  doPost()
+  docs/js/app.js   ◄──── { ok: true, dados } ─────────────────┤  valida o token
+  docs/sw.js (offline)                                        ▼
+  docs/manifest.json                                   Planilha Google
+                                   (Usuarios / Exercicios / Agenda / Checklist)
 ```
 
 > **Por que duas peças?** Para o Android tratar o site como aplicativo — ícone
@@ -65,9 +67,22 @@ querem organizar a rotina e acompanhar o progresso.
 
 ---
 
-## As 3 abas da planilha
+## As 4 abas da planilha
 
 Todas são criadas sozinhas na primeira execução — você não monta nada à mão.
+
+### `Usuarios` — quem pode entrar
+
+| Coluna | Conteúdo |
+|---|---|
+| `usuario` | nome de login (minúsculo, sem espaços) |
+| `nome` | como a pessoa aparece no app ("Olá, Ana") |
+| `salt` | valor aleatório por conta |
+| `senhaHash` | a senha **não** fica aqui — só um hash dela (veja *Segurança*) |
+| `criadoEm` | data/hora do cadastro |
+
+As três abas abaixo têm uma coluna **`usuario`** no fim. Cada pessoa só enxerga
+e mexe nas linhas com o próprio nome.
 
 ### `Exercicios` — o cadastro
 
@@ -81,6 +96,7 @@ Todas são criadas sozinhas na primeira execução — você não monta nada à 
 | `obs` | observação livre |
 | `criadoEm` | data/hora do cadastro |
 | `link` | URL de um vídeo mostrando a execução (opcional) |
+| `usuario` | dono da linha |
 
 ### `Agenda` — a semana montada
 
@@ -128,6 +144,32 @@ repita com **`testarAgenda`**). Na primeira vez o Google pede autorização:
 
 Volte à planilha: as abas foram criadas e o **Registro de execução** mostra o
 create/read/update/delete acontecendo.
+
+### 4b. Criar as contas
+
+Ainda no editor, abra a função **`cadastrarUsuarios`** (no fim do arquivo) e
+edite a lista:
+
+```js
+var contas = [
+  { usuario: 'marcelo', senha: 'uma-senha-boa',  nome: 'Marcelo' },
+  { usuario: 'ana',     senha: 'outra-senha-boa', nome: 'Ana' }
+];
+```
+
+Selecione **`cadastrarUsuarios`** na barra do topo → **Executar**. O registro de
+execução confirma cada conta criada. **Depois, apague as senhas do código** —
+elas não devem ficar gravadas ali (o app não precisa delas: a planilha guarda só
+o hash).
+
+Não existe "cadastre-se" no app de propósito: como a URL da API é pública,
+qualquer pessoa que a descobrisse poderia criar contas e encher a sua planilha.
+
+### 4c. Dar dono aos exercícios que já existiam
+
+Se a planilha já tinha exercícios de antes do login, eles ficam **invisíveis**
+até alguém adotá-los. Em **`adotarMeusRegistros`**, troque `'marcelo'` pelo seu
+usuário e execute uma vez. O registro mostra quantas linhas passaram a ser suas.
 
 ### 5. Publicar como app da web
 
@@ -193,6 +235,9 @@ avisando onde está o app, em vez de um JSON solto.
 
 ## Instalar no celular
 
+Ao abrir, o app pede **usuário e senha** (as contas do passo 4b). Depois de
+entrar uma vez, o aparelho lembra por 30 dias.
+
 1. Abra o endereço do GitHub Pages no **Chrome** ou **Brave** do Android.
 2. Menu **⋮** → **Instalar aplicativo** (ou *Adicionar à tela inicial*).
 3. O ícone do halter aparece na tela inicial, e ao tocar o app abre **sem a
@@ -218,25 +263,30 @@ No **iPhone**: Safari → botão de compartilhar → **Adicionar à Tela de Iní
 
 ## Como o código está organizado
 
-**`apps-script/Codigo.gs`** (servidor), em 9 blocos comentados:
+**`apps-script/Codigo.gs`** (servidor), em 11 blocos comentados:
 
-1. **A API JSON** — `doPost()` recebe `{ acao, args }`; `acoesPermitidas_()` é a
-   lista branca do que pode ser chamado de fora (nada além dela roda);
-   `responderJson_()` transforma exceção em `{ ok: false, erro }`.
-2. **Acesso à planilha** — cria as abas na primeira vez; `garantirColunas_()`
-   completa o cabeçalho de uma planilha antiga sem a coluna `link`;
+1. **A API JSON** — `doPost()` recebe `{ acao, args, token }`;
+   `acoesPermitidas_()` é a lista branca do que pode ser chamado de fora;
+   `executar_()` valida o token e passa o usuário como **primeiro argumento** de
+   toda ação — o cliente nunca diz quem é, quem diz é a assinatura do token.
+2. **Login, senhas e tokens** — `hashSenha_()`, `login()`, `gerarToken_()`,
+   `validarToken_()`, `trocarSenha()`. Bloqueio de 15 min após 5 erros.
+3. **Acesso à planilha** — cria as abas na primeira vez; `garantirColunas_()`
+   completa o cabeçalho de uma planilha antiga (sem `link`, sem `usuario`);
    `comTrava_()` usa `LockService` contra cliques simultâneos.
-3. **Conversão linha ↔ objeto**.
-4. **A semana corrente** — `inicioDaSemana_()` acha a segunda-feira.
-5. **Validação** — o servidor revalida tudo, inclusive o formato do `link`.
-6. **As 4 operações CRUD** — mais `carregarDados()`, que devolve exercícios,
-   agenda, checklist e as opções dos selects numa chamada só.
-7. **Agenda** — `lerAgenda_()`, `salvarAgenda()`.
-8. **Checklist** — `lerFeitos_()`, `marcarDia()`, `reiniciarSemana()`.
-9. **`testarCRUD()` e `testarAgenda()`** — testes manuais pelo editor.
+4. **Conversão linha ↔ objeto**.
+5. **A semana corrente** — `inicioDaSemana_()` acha a segunda-feira.
+6. **Validação** — o servidor revalida tudo, inclusive o formato do `link`.
+7. **As 4 operações CRUD** — todas filtram pelo usuário; editar ou excluir um
+   `id` de outra pessoa dá "não encontrado".
+8. **Agenda** e 9. **Checklist** — por usuário.
+10. **Migração** — `adotarRegistrosSemDono_()` carimba o dono nas linhas antigas.
+11. **Funções para rodar no editor** — `cadastrarUsuarios()`,
+    `adotarMeusRegistros()`, `testarCRUD()`, `testarAgenda()`.
 
-**`docs/js/app.js`** (cliente): `Servidor.chamar()` faz um POST só, sempre para a
-mesma URL. O estado fica no objeto `App`, cópia em memória dos dados da planilha
+**`docs/js/app.js`** (cliente): `Sessao` guarda o token no `localStorage`;
+`Servidor.chamar()` faz um POST só, sempre para a mesma URL, mandando o token
+junto — e se a resposta vier com `codigo: 'SESSAO_INVALIDA'`, volta para o login. O estado fica no objeto `App`, cópia em memória dos dados da planilha
 — trocar de tela, buscar e filtrar é instantâneo, e só as operações de escrita
 vão à rede. `Retrato` guarda o último pacote no `localStorage`, para o app abrir
 offline em modo leitura.
@@ -260,7 +310,51 @@ offline em modo leitura.
 
 ---
 
+## Segurança — o que protege e o que não protege
+
+Foi feito para duas pessoas separarem os treinos, com um cuidado razoável —
+não é um banco.
+
+**O que está feito:**
+
+- A senha **nunca** é gravada. Vai para a planilha só o resultado de
+  `HMAC(pepper, salt|senha)` repetido 300 vezes. O *pepper* é um segredo gerado
+  automaticamente e guardado nas **propriedades do script**, fora da planilha.
+  Quem baixar a planilha não consegue testar senhas, porque não tem o pepper.
+- O token é `carga.assinatura`: a carga diz o usuário e a validade; a assinatura
+  é um HMAC com outro segredo do script. Mudar o usuário na carga invalida a
+  assinatura. Vale 30 dias.
+- Toda ação de dados recebe o usuário **do token**, nunca do cliente. Não adianta
+  mandar `"marcelo"` nos argumentos.
+- 5 senhas erradas bloqueiam a conta por 15 minutos.
+- Comparações de hash e assinatura não param no primeiro caractere diferente.
+
+**O que não está feito (e tudo bem para este uso):**
+
+- Não há "esqueci a senha" — quem esquecer, o dono da planilha apaga a linha em
+  `Usuarios` e cadastra de novo.
+- Sair não invalida o token no servidor (não há lista de sessões); ele só é
+  esquecido pelo aparelho. Expira sozinho em 30 dias.
+- A URL da API é pública. Sem token ela só responde `login`; e o bloqueio por
+  tentativas torna adivinhar senha inviável na prática.
+
+---
+
 ## Problemas comuns
+
+### "Sua sessão expirou. Entre de novo."
+
+O token tem 30 dias. Entre de novo. Se acontecer logo depois de entrar, o
+servidor pode ter sido republicado com o segredo regenerado — entre de novo.
+
+### "Muitas tentativas. Aguarde 15 minutos."
+
+Cinco senhas erradas seguidas. Espere, ou o dono da planilha zera o bloqueio
+republicando o script.
+
+### Entrei e meus exercícios sumiram
+
+Eles são de antes do login e não têm dono. Rode **`adotarMeusRegistros`** (passo 4c).
 
 ### O app abre e diz "Sem conexão com o servidor"
 
@@ -318,19 +412,23 @@ npm install          # baixa o jsdom
 npm test
 ```
 
-São **240 verificações**, em duas suítes:
+São **338 verificações**, em duas suítes:
 
-- **`servidor.test.js`** (99) — roda o `Codigo.gs` de verdade contra uma planilha
+- **`servidor.test.js`** (153) — roda o `Codigo.gs` de verdade contra uma planilha
   emulada: CRUD, validação, migração da planilha de 9 para 10 colunas, agenda,
   checklist, virada de semana (com o relógio adiantado na marra), e a camada de
   API — inclusive recusando ação fora da lista branca e função interna do script.
   Também cobre o caso em que o Sheets converte a data da semana em `Date`, que
-  já quebrou o checklist uma vez.
-- **`interface.test.js`** (141) — roda o `docs/index.html` e o `docs/js/app.js`
+  já quebrou o checklist uma vez. E o login: hash com salt e pepper, bloqueio por
+  tentativas, token adulterado/expirado, e o **isolamento entre usuários** (Ana
+  não vê, não edita e não apaga nada do Marcelo).
+- **`interface.test.js`** (185) — roda o `docs/index.html` e o `docs/js/app.js`
   de verdade num DOM (jsdom). O `fetch` falso chama o `doPost()` real, então cada
   clique atravessa a mesma camada de API da produção. Cobre navegação, busca,
   filtros, modal, o botão de vídeo, a agenda com checklist, o conteúdo do
-  `manifest.json` e do `sw.js`, e o modo offline.
+  `manifest.json` e do `sw.js`, o modo offline, e o fluxo de login: senha errada,
+  entrar, sair, sessão expirada, trocar senha, e a Ana entrando e vendo só o que
+  é dela.
 
 O emulador em `planilhaFalsa.js` reproduz de propósito as **regras** do Apps
 Script, não só as assinaturas — é isso que faz um teste local falhar pelos mesmos

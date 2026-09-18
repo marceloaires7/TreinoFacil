@@ -10,7 +10,7 @@
    último retrato da planilha no localStorage.
    =========================================================== */
 
-const CACHE = 'treinofacil-v2';
+const CACHE = 'treinofacil-v3';
 
 const SHELL = [
   './',

@@ -3,6 +3,7 @@
    para que um teste local falhe pelos mesmos motivos que o Google falharia. */
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const RAIZ = path.join(__dirname, '..');          // raiz do projeto
 
 function criarAmbiente(opcoes) {
@@ -111,12 +112,26 @@ function criarAmbiente(opcoes) {
 
   global.Session = { getScriptTimeZone: () => 'America/Sao_Paulo' };
 
+  /* Bytes do Apps Script são "signed" (-128..127). Reproduzir isso importa:
+     o paraHex_() do Codigo.gs precisa lidar com negativos. */
+  const bytesAssinados = buf => Array.from(buf, b => (b > 127 ? b - 256 : b));
+  const bufferDe = bytes => Buffer.from(bytes.map(b => (b + 256) % 256));
+
   global.Utilities = {
+    Charset: { UTF_8: 'UTF_8' },
     // UUID de verdade e aleatorio no comeco, como o do Apps Script
     getUuid: () => {
       const hex = n => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('');
       return [hex(8), hex(4), hex(4), hex(4), hex(12)].join('-');
     },
+    computeHmacSha256Signature: (texto, chave) =>
+      bytesAssinados(crypto.createHmac('sha256', String(chave)).update(String(texto), 'utf8').digest()),
+    base64EncodeWebSafe: texto => Buffer.from(String(texto), 'utf8').toString('base64url'),
+    base64DecodeWebSafe: texto => {
+      if (!/^[A-Za-z0-9_-]*=*$/.test(texto)) throw new Error('Could not decode string.');
+      return bytesAssinados(Buffer.from(texto, 'base64url'));
+    },
+    newBlob: bytes => ({ getDataAsString: () => bufferDe(bytes).toString('utf8') }),
     formatDate: (d, tz, padrao) => {
       const p = n => String(n).padStart(2, '0');
       return padrao
@@ -130,6 +145,32 @@ function criarAmbiente(opcoes) {
 
   global.LockService = {
     getScriptLock: () => ({ tryLock: () => true, releaseLock: () => { } })
+  };
+
+  /* --- PropertiesService: onde ficam os segredos, fora da planilha --- */
+  const propriedades = {};
+  global.PropertiesService = {
+    getScriptProperties: () => ({
+      getProperty: k => (k in propriedades ? propriedades[k] : null),
+      setProperty: (k, v) => { propriedades[k] = String(v); }
+    })
+  };
+  global.__propriedades = propriedades;
+
+  /* --- CacheService: contador de erros de senha, com validade ---
+     A validade usa o relógio falso, então __setAgora() faz o bloqueio expirar. */
+  const cache = {};
+  global.CacheService = {
+    getScriptCache: () => ({
+      get: k => {
+        const item = cache[k];
+        if (!item) return null;
+        if (item.expira <= Date.now()) { delete cache[k]; return null; }
+        return item.valor;
+      },
+      put: (k, v, segundos) => { cache[k] = { valor: String(v), expira: Date.now() + (segundos || 600) * 1000 }; },
+      remove: k => { delete cache[k]; }
+    })
   };
 
   global.Logger = { log: (...a) => console.log('   [log]', ...a) };

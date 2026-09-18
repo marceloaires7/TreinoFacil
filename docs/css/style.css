@@ -1219,3 +1219,104 @@ body {
 .offline-aviso[hidden] {
   display: none;
 }
+
+/* ===========================================================
+   Login e conta
+   =========================================================== */
+
+/* Deslogado: some o menu, a navegação inferior e o FAB —
+   a única coisa na tela é o formulário de entrada. */
+body.deslogado .bottom-nav,
+body.deslogado .fab,
+body.deslogado #menuBtn {
+  display: none;
+}
+
+body.deslogado .content {
+  padding-bottom: 24px;
+}
+
+.login-marca {
+  text-align: center;
+  padding: 28px 0 22px;
+}
+
+.login-logo {
+  width: 72px;
+  height: 72px;
+  margin: 0 auto 14px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #6D5BF0, var(--primary));
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-md);
+}
+
+.login-logo svg {
+  width: 38px;
+  height: 38px;
+}
+
+.login-marca h2 {
+  font-size: 1.5rem;
+  margin-bottom: 4px;
+}
+
+.login-marca p {
+  color: var(--muted);
+  font-size: .92rem;
+}
+
+#loginForm .erro-box {
+  margin-top: 4px;
+}
+
+.login-rodape {
+  text-align: center;
+  color: var(--muted);
+  font-size: .8rem;
+  margin-top: 18px;
+}
+
+/* Botão "Sair" no menu lateral, acima do "Apagar tudo" */
+.btn-sair {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  min-height: 46px;
+  margin-bottom: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-sair svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Cartão "Minha conta" (tela Sobre) */
+.conta .conta-quem {
+  color: var(--muted);
+  font-size: .92rem;
+  margin-bottom: 14px;
+}
+
+.conta-form {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.conta-form[hidden] {
+  display: none;
+}

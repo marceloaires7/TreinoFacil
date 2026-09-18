@@ -58,7 +58,7 @@
         </div>
         <div>
           <div class="brand-name">TreinoFácil</div>
-          <div class="brand-tag">Registre seus treinos</div>
+          <div class="brand-tag" id="brandUsuario">Registre seus treinos</div>
         </div>
       </div>
     </div>
@@ -105,6 +105,13 @@
     </nav>
 
     <div class="drawer-foot">
+      <button class="btn-sair" id="btnSair">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round">
+          <path d="M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5M15 8l4 4-4 4M19 12H9" />
+        </svg>
+        Sair da conta
+      </button>
       <button class="btn-clear" id="btnApagarTudo">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
           stroke-linejoin="round">
@@ -117,6 +124,38 @@
 
   <!-- ============ CONTEÚDO (as 4 telas) ============ -->
   <main class="content">
+
+    <!-- ---------- TELA: LOGIN ---------- -->
+    <section class="view" id="view-login">
+      <div class="login-marca">
+        <div class="login-logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round">
+            <path d="M6.5 6.5v11M3 8.5v7M17.5 6.5v11M21 8.5v7M6.5 12h11" />
+          </svg>
+        </div>
+        <h2>TreinoFácil</h2>
+        <p>Entre para ver os seus treinos.</p>
+      </div>
+
+      <form id="loginForm" class="card" novalidate>
+        <div class="field">
+          <label for="l-usuario">Usuário</label>
+          <input type="text" id="l-usuario" autocomplete="username" autocapitalize="none"
+            spellcheck="false" placeholder="seu usuário">
+          <div class="err"></div>
+        </div>
+        <div class="field">
+          <label for="l-senha">Senha</label>
+          <input type="password" id="l-senha" autocomplete="current-password" placeholder="sua senha">
+          <div class="err"></div>
+        </div>
+        <div class="erro-box" id="loginErro" hidden></div>
+        <button type="submit" class="btn btn-primary btn-block" id="btnEntrar">Entrar</button>
+      </form>
+
+      <p class="login-rodape">As contas são criadas pelo dono da planilha.</p>
+    </section>
 
     <!-- ---------- TELA: INÍCIO ---------- -->
     <section class="view" id="view-home">
@@ -293,6 +332,37 @@
           <span class="badge">Update</span>
           <span class="badge">Delete</span>
         </div>
+      </div>
+
+      <div class="card conta" style="margin-top:12px">
+        <p><strong>Minha conta</strong></p>
+        <p class="conta-quem">Você está como <strong id="contaNome">—</strong>
+          (<span id="contaUsuario">—</span>).</p>
+
+        <button type="button" class="btn btn-outline btn-block" id="btnMostrarTrocaSenha">Trocar senha</button>
+
+        <form id="senhaForm" class="conta-form" novalidate hidden>
+          <div class="field">
+            <label for="s-atual">Senha atual</label>
+            <input type="password" id="s-atual" autocomplete="current-password">
+            <div class="err"></div>
+          </div>
+          <div class="field">
+            <label for="s-nova">Nova senha</label>
+            <input type="password" id="s-nova" autocomplete="new-password" minlength="6">
+            <div class="hint">Mínimo de 6 caracteres.</div>
+            <div class="err"></div>
+          </div>
+          <div class="field">
+            <label for="s-confirma">Repita a nova senha</label>
+            <input type="password" id="s-confirma" autocomplete="new-password">
+            <div class="err"></div>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn btn-ghost" id="btnCancelarTrocaSenha">Cancelar</button>
+            <button type="submit" class="btn btn-success" id="btnSalvarSenha">Salvar senha</button>
+          </div>
+        </form>
       </div>
 
       <p class="page-sub" style="margin-top:16px;text-align:center">

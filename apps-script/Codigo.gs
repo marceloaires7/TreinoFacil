@@ -2,16 +2,21 @@
    TreinoFácil — Backend (Google Apps Script + Google Sheets)
    -----------------------------------------------------------
    Este arquivo é o SERVIDOR de dados do app:
-     • doPost() -> recebe { acao, args } e devolve JSON
-     • CRUD     -> lê e escreve direto na planilha
+     • doPost() -> recebe { acao, args, token } e devolve JSON
+     • login    -> confere usuário/senha e devolve um token
+     • CRUD     -> lê e escreve direto na planilha, sempre
+                   filtrando pelo usuário dono do token
    Não existe Make, não existe Netlify, não existe webhook.
    A interface fica no GitHub Pages e conversa com estas
    funções por fetch().
 
-   A planilha tem 3 abas, todas criadas automaticamente:
+   A planilha tem 4 abas, todas criadas automaticamente:
+     • Usuarios   -> quem pode entrar (senha guardada como hash)
      • Exercicios -> o cadastro (1 linha por exercício)
      • Agenda     -> qual treino cai em cada dia da semana
      • Checklist  -> quais dias já foram feitos, semana a semana
+   As três últimas têm uma coluna "usuario": cada pessoa só
+   enxerga e mexe nas próprias linhas.
    =========================================================== */
 
 /* -----------------------------------------------------------
@@ -31,32 +36,45 @@ var URL_DO_APP = '';
 var ABA = 'Exercicios';
 var ABA_AGENDA = 'Agenda';
 var ABA_CHECKLIST = 'Checklist';
+var ABA_USUARIOS = 'Usuarios';
 
-var COLUNAS = ['id', 'nome', 'grupo', 'dia', 'series', 'repeticoes', 'carga', 'obs', 'criadoEm', 'link'];
-var COLUNAS_AGENDA = ['dia', 'treino'];
-var COLUNAS_CHECKLIST = ['semana', 'dia', 'feitoEm'];
+var COLUNAS = ['id', 'nome', 'grupo', 'dia', 'series', 'repeticoes', 'carga', 'obs', 'criadoEm', 'link', 'usuario'];
+var COLUNAS_AGENDA = ['dia', 'treino', 'usuario'];
+var COLUNAS_CHECKLIST = ['semana', 'dia', 'feitoEm', 'usuario'];
+var COLUNAS_USUARIOS = ['usuario', 'nome', 'salt', 'senhaHash', 'criadoEm'];
+
+// Posição (0-based) da coluna "usuario" em cada aba de dados
+var IDX_USUARIO_EX = 10;
+var IDX_USUARIO_AGENDA = 2;
+var IDX_USUARIO_CHECKLIST = 3;
 
 var GRUPOS = ['Peito', 'Costas', 'Pernas', 'Ombros', 'Bíceps', 'Tríceps', 'Abdômen', 'Cardio'];
 var TREINOS = ['Treino A', 'Treino B', 'Treino C', 'Treino D', 'Treino E'];
 var DIAS_SEMANA = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
 
+// Segurança
+var DURACAO_SESSAO_DIAS = 30;      // quanto tempo o login vale
+var MAX_TENTATIVAS = 5;            // erros de senha até bloquear
+var BLOQUEIO_SEGUNDOS = 15 * 60;   // duração do bloqueio
+var ITERACOES_HASH = 300;          // voltas do hash de senha (custo p/ quem tentar quebrar)
+var SENHA_MINIMA = 6;
+
 
 /* ===========================================================
    1) A API JSON
    -----------------------------------------------------------
-   Este script não serve mais a interface — quem faz isso é o
-   GitHub Pages, para o app poder ter manifest.json e Service
-   Worker (é o que dá o ícone próprio na tela inicial e a
-   abertura sem as barras do navegador).
+   O app manda um POST com { acao, args, token } e recebe
+   { ok: true, dados } ou { ok: false, erro, codigo? }.
 
-   Aqui ficou só o servidor de dados. O app manda um POST com
-   { acao: 'criarExercicio', args: [ {...} ] } e recebe de volta
-   { ok: true, dados: ... } ou { ok: false, erro: 'mensagem' }.
+   Só "login" dispensa token. Todas as outras ações recebem o
+   usuário dono do token como PRIMEIRO argumento — o cliente
+   nunca diz quem ele é; quem diz é a assinatura do token.
    =========================================================== */
 
 /** Só estas funções podem ser chamadas de fora. */
 function acoesPermitidas_() {
   return {
+    login: login,
     carregarDados: carregarDados,
     listarExercicios: listarExercicios,
     criarExercicio: criarExercicio,
@@ -66,9 +84,13 @@ function acoesPermitidas_() {
     carregarExemplos: carregarExemplos,
     salvarAgenda: salvarAgenda,
     marcarDia: marcarDia,
-    reiniciarSemana: reiniciarSemana
+    reiniciarSemana: reiniciarSemana,
+    trocarSenha: trocarSenha
   };
 }
+
+/** Ações que não exigem estar logado. */
+var ACOES_PUBLICAS = ['login'];
 
 /** O app chama por POST. */
 function doPost(e) {
@@ -79,14 +101,14 @@ function doPost(e) {
     } catch (erro) {
       throw new Error('Corpo da requisição não é JSON válido.');
     }
-    return executar_(corpo.acao, corpo.args);
+    return executar_(corpo.acao, corpo.args, corpo.token);
   });
 }
 
 /**
  * GET serve para duas coisas:
- *   • sem parâmetro  -> página simples dizendo onde está o app
- *   • ?acao=listarExercicios -> testar a API direto no navegador
+ *   • sem parâmetro -> página simples dizendo onde está o app
+ *   • ?acao=...&token=... -> testar a API direto no navegador
  */
 function doGet(e) {
   var acao = (e && e.parameter && e.parameter.acao) || '';
@@ -98,31 +120,39 @@ function doGet(e) {
         try { args = JSON.parse(e.parameter.args); }
         catch (erro) { throw new Error('O parâmetro "args" precisa ser um JSON válido.'); }
       }
-      return executar_(acao, args);
+      return executar_(acao, args, e.parameter.token);
     });
   }
 
   return paginaDeAviso_();
 }
 
-/** Roda a ação pedida, se ela estiver na lista permitida. */
-function executar_(acao, args) {
+/** Roda a ação pedida, se ela estiver na lista permitida e o token for válido. */
+function executar_(acao, args, token) {
   var permitidas = acoesPermitidas_();
   acao = String(acao || '');
+  args = Array.isArray(args) ? args : [];
 
   if (!Object.prototype.hasOwnProperty.call(permitidas, acao)) {
     throw new Error('Ação desconhecida: "' + acao + '".');
   }
-  return permitidas[acao].apply(null, args || []);
+
+  if (ACOES_PUBLICAS.indexOf(acao) >= 0) {
+    return permitidas[acao].apply(null, args);
+  }
+
+  var usuario = validarToken_(token);
+  return permitidas[acao].apply(null, [usuario].concat(args));
 }
 
-/** Embrulha o resultado no formato { ok, dados } / { ok, erro }. */
+/** Embrulha o resultado no formato { ok, dados } / { ok, erro, codigo }. */
 function responderJson_(fn) {
   var corpo;
   try {
     corpo = { ok: true, dados: fn() };
   } catch (erro) {
     corpo = { ok: false, erro: (erro && erro.message) ? erro.message : String(erro) };
+    if (erro && erro.codigo) corpo.codigo = erro.codigo;
   }
   return ContentService
     .createTextOutput(JSON.stringify(corpo))
@@ -147,7 +177,211 @@ function paginaDeAviso_() {
 
 
 /* ===========================================================
-   2) ACESSO À PLANILHA
+   2) LOGIN, SENHAS E TOKENS
+   -----------------------------------------------------------
+   • A senha NUNCA é gravada. Vai para a planilha só o hash:
+       hash = HMAC(pepper, salt|senha), repetido ITERACOES vezes
+     O "pepper" é um segredo que vive nas propriedades do script
+     (fora da planilha). Quem baixar a planilha não tem como
+     testar senhas, porque não tem o pepper.
+   • O token é "carga.assinatura": carga = usuario|expira em
+     base64, assinatura = HMAC(segredo, carga). O servidor não
+     guarda sessão nenhuma — só confere a assinatura.
+   =========================================================== */
+
+/** Segredo gerado uma vez e guardado fora da planilha. */
+function segredo_(chave) {
+  var props = PropertiesService.getScriptProperties();
+  var valor = props.getProperty(chave);
+  if (!valor) {
+    valor = Utilities.getUuid() + Utilities.getUuid();
+    props.setProperty(chave, valor);
+  }
+  return valor;
+}
+
+/** Bytes do Apps Script (-128..127) -> texto hexadecimal. */
+function paraHex_(bytes) {
+  var hex = '';
+  for (var i = 0; i < bytes.length; i++) {
+    var b = (bytes[i] + 256) % 256;
+    hex += (b < 16 ? '0' : '') + b.toString(16);
+  }
+  return hex;
+}
+
+function hmac_(texto, chave) {
+  return paraHex_(Utilities.computeHmacSha256Signature(texto, chave, Utilities.Charset.UTF_8));
+}
+
+function hashSenha_(senha, salt) {
+  var pepper = segredo_('PEPPER_SENHA');
+  var h = hmac_(salt + '|' + senha, pepper);
+  for (var i = 0; i < ITERACOES_HASH; i++) {
+    h = hmac_(h + '|' + salt, pepper);
+  }
+  return h;
+}
+
+/** Compara sem parar no primeiro caractere diferente (não vaza pelo tempo). */
+function iguaisSemVazar_(a, b) {
+  a = String(a); b = String(b);
+  if (a.length !== b.length) return false;
+  var dif = 0;
+  for (var i = 0; i < a.length; i++) dif |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return dif === 0;
+}
+
+function erroSessao_() {
+  var erro = new Error('Sessão inválida ou expirada. Entre de novo.');
+  erro.codigo = 'SESSAO_INVALIDA';
+  return erro;
+}
+
+function gerarToken_(usuario) {
+  var expira = Date.now() + DURACAO_SESSAO_DIAS * 24 * 60 * 60 * 1000;
+  var carga = Utilities.base64EncodeWebSafe(usuario + '|' + expira);
+  return carga + '.' + hmac_(carga, segredo_('SEGREDO_TOKEN'));
+}
+
+/** Devolve o usuário dono do token, ou lança SESSAO_INVALIDA. */
+function validarToken_(token) {
+  var partes = String(token || '').split('.');
+  if (partes.length !== 2 || !partes[0] || !partes[1]) throw erroSessao_();
+
+  if (!iguaisSemVazar_(hmac_(partes[0], segredo_('SEGREDO_TOKEN')), partes[1])) throw erroSessao_();
+
+  var carga;
+  try {
+    carga = Utilities.newBlob(Utilities.base64DecodeWebSafe(partes[0])).getDataAsString();
+  } catch (e) {
+    throw erroSessao_();
+  }
+  var sep = carga.lastIndexOf('|');
+  var usuario = carga.slice(0, sep);
+  var expira = Number(carga.slice(sep + 1));
+
+  if (!usuario || !(expira > Date.now())) throw erroSessao_();
+  if (!acharUsuario_(usuario)) throw erroSessao_();     // conta apagada depois do login
+  return usuario;
+}
+
+/** Nome de usuário: minúsculo, sem espaços, 3 a 30 caracteres. */
+function normalizarUsuario_(usuario) {
+  return String(usuario == null ? '' : usuario).trim().toLowerCase();
+}
+
+function validarNomeDeUsuario_(usuario) {
+  if (!/^[a-z0-9._-]{3,30}$/.test(usuario)) {
+    throw new Error('Usuário deve ter de 3 a 30 caracteres: letras minúsculas, números, ponto, traço ou sublinhado.');
+  }
+}
+
+/** Aba de usuários. */
+function getAbaUsuarios_() {
+  var r = abaComCabecalho_(ABA_USUARIOS, COLUNAS_USUARIOS);
+  if (r.nova) {
+    r.aba.getRange(1, 1, r.aba.getMaxRows(), COLUNAS_USUARIOS.length).setNumberFormat('@');
+    r.aba.setColumnWidth(4, 260);
+  }
+  return r.aba;
+}
+
+/** Devolve { linha, usuario, nome, salt, senhaHash } ou null. */
+function acharUsuario_(usuario) {
+  usuario = normalizarUsuario_(usuario);
+  var aba = getAbaUsuarios_();
+  var ultima = aba.getLastRow();
+  if (ultima < 2) return null;
+
+  var valores = aba.getRange(2, 1, ultima - 1, COLUNAS_USUARIOS.length).getValues();
+  for (var i = 0; i < valores.length; i++) {
+    if (normalizarUsuario_(valores[i][0]) === usuario) {
+      return {
+        linha: i + 2,
+        usuario: usuario,
+        nome: String(valores[i][1]),
+        salt: String(valores[i][2]),
+        senhaHash: String(valores[i][3])
+      };
+    }
+  }
+  return null;
+}
+
+/** Cria uma conta. Chamado só pelo dono da planilha, pelo editor. */
+function criarUsuario_(usuario, senha, nome) {
+  usuario = normalizarUsuario_(usuario);
+  senha = String(senha == null ? '' : senha);
+  nome = String(nome == null ? '' : nome).trim() || usuario;
+
+  validarNomeDeUsuario_(usuario);
+  if (senha.length < SENHA_MINIMA) throw new Error('A senha precisa ter pelo menos ' + SENHA_MINIMA + ' caracteres.');
+
+  return comTrava_(function () {
+    if (acharUsuario_(usuario)) throw new Error('Já existe o usuário "' + usuario + '".');
+    var salt = Utilities.getUuid();
+    getAbaUsuarios_().appendRow([usuario, nome, salt, hashSenha_(senha, salt), agora_()]);
+    return { usuario: usuario, nome: nome };
+  });
+}
+
+/** AÇÃO PÚBLICA — confere usuário/senha e devolve o token. */
+function login(usuario, senha) {
+  usuario = normalizarUsuario_(usuario);
+  senha = String(senha == null ? '' : senha);
+  if (!usuario || !senha) throw new Error('Informe usuário e senha.');
+
+  var cache = CacheService.getScriptCache();
+  var chaveFalhas = 'falhas:' + usuario;
+  var falhas = Number(cache.get(chaveFalhas) || 0);
+  if (falhas >= MAX_TENTATIVAS) {
+    throw new Error('Muitas tentativas. Aguarde 15 minutos e tente de novo.');
+  }
+
+  var conta = acharUsuario_(usuario);
+  // Mesmo sem conta, calcula um hash: a resposta demora igual, e quem
+  // tenta adivinhar nomes de usuário não ganha pista pelo tempo.
+  var hash = hashSenha_(senha, conta ? conta.salt : 'salt-de-mentira');
+  var confere = !!conta && iguaisSemVazar_(hash, conta.senhaHash);
+
+  if (!confere) {
+    cache.put(chaveFalhas, String(falhas + 1), BLOQUEIO_SEGUNDOS);
+    throw new Error('Usuário ou senha incorretos.');
+  }
+
+  cache.remove(chaveFalhas);
+  return {
+    token: gerarToken_(usuario),
+    usuario: usuario,
+    nome: conta.nome,
+    expiraEm: Date.now() + DURACAO_SESSAO_DIAS * 24 * 60 * 60 * 1000
+  };
+}
+
+/** Troca a própria senha (precisa da atual). */
+function trocarSenha(usuario, senhaAtual, senhaNova) {
+  senhaAtual = String(senhaAtual == null ? '' : senhaAtual);
+  senhaNova = String(senhaNova == null ? '' : senhaNova);
+  if (senhaNova.length < SENHA_MINIMA) {
+    throw new Error('A nova senha precisa ter pelo menos ' + SENHA_MINIMA + ' caracteres.');
+  }
+
+  return comTrava_(function () {
+    var conta = acharUsuario_(usuario);
+    if (!conta) throw erroSessao_();
+    if (!iguaisSemVazar_(hashSenha_(senhaAtual, conta.salt), conta.senhaHash)) {
+      throw new Error('A senha atual não confere.');
+    }
+    var salt = Utilities.getUuid();
+    getAbaUsuarios_().getRange(conta.linha, 3, 1, 2).setValues([[salt, hashSenha_(senhaNova, salt)]]);
+    return true;
+  });
+}
+
+
+/* ===========================================================
+   3) ACESSO À PLANILHA
    =========================================================== */
 
 function getPlanilha_() {
@@ -173,59 +407,51 @@ function abaComCabecalho_(nome, colunas) {
     aba.setFrozenRows(1);
     return { aba: aba, nova: true };
   }
+  garantirColunas_(aba, colunas);
   return { aba: aba, nova: false };
+}
+
+/**
+ * Planilha criada por uma versão anterior tem menos colunas (sem "link",
+ * sem "usuario"). Completa o cabeçalho em vez de quebrar, sem perder dados.
+ */
+function garantirColunas_(aba, colunas) {
+  var largura = aba.getLastColumn();
+  if (largura >= colunas.length) return;
+
+  var faltam = colunas.slice(largura);
+  aba.getRange(1, largura + 1, 1, faltam.length).setValues([faltam]).setFontWeight('bold');
+  aba.getRange(1, largura + 1, aba.getMaxRows(), faltam.length).setNumberFormat('@');
 }
 
 /** Aba do cadastro de exercícios. */
 function getAba_() {
   var r = abaComCabecalho_(ABA, COLUNAS);
-  var aba = r.aba;
-
   if (r.nova) {
-    // id, criadoEm e link como TEXTO puro, para o Sheets não converter
-    // em número, data ou hyperlink automático
-    aba.getRange(1, 1, aba.getMaxRows(), 1).setNumberFormat('@');
-    aba.getRange(1, 9, aba.getMaxRows(), 2).setNumberFormat('@');
-    aba.setColumnWidth(1, 130);
-    aba.setColumnWidth(2, 200);
-    aba.setColumnWidth(10, 240);
-  } else {
-    garantirColunas_(aba);
+    // id, criadoEm, link e usuario como TEXTO puro, para o Sheets não
+    // converter em número, data ou hyperlink automático
+    r.aba.getRange(1, 1, r.aba.getMaxRows(), 1).setNumberFormat('@');
+    r.aba.getRange(1, 9, r.aba.getMaxRows(), 3).setNumberFormat('@');
+    r.aba.setColumnWidth(1, 130);
+    r.aba.setColumnWidth(2, 200);
+    r.aba.setColumnWidth(10, 240);
   }
-  return aba;
+  return r.aba;
 }
 
-/**
- * Planilha criada antes da coluna "link" tem só 9 colunas.
- * Completa o cabeçalho em vez de quebrar, para não perder dados.
- */
-function garantirColunas_(aba) {
-  var largura = aba.getLastColumn();
-  if (largura >= COLUNAS.length) return;
-
-  var faltam = COLUNAS.slice(largura);
-  aba.getRange(1, largura + 1, 1, faltam.length).setValues([faltam]).setFontWeight('bold');
-  aba.getRange(1, largura + 1, aba.getMaxRows(), faltam.length).setNumberFormat('@');
-  aba.setColumnWidth(COLUNAS.length, 240);
-}
-
-/** Aba da agenda — nasce com os 7 dias, todos em Descanso. */
+/** Aba da agenda — uma linha por (dia, usuário). */
 function getAbaAgenda_() {
   var r = abaComCabecalho_(ABA_AGENDA, COLUNAS_AGENDA);
-
   if (r.nova) {
-    var linhas = DIAS_SEMANA.map(function (dia) { return [dia, '']; });
-    r.aba.getRange(2, 1, linhas.length, COLUNAS_AGENDA.length).setValues(linhas);
     r.aba.setColumnWidth(1, 120);
     r.aba.setColumnWidth(2, 140);
   }
   return r.aba;
 }
 
-/** Aba do checklist — uma linha por dia concluído, com a semana a que pertence. */
+/** Aba do checklist — uma linha por dia concluído, por usuário. */
 function getAbaChecklist_() {
   var r = abaComCabecalho_(ABA_CHECKLIST, COLUNAS_CHECKLIST);
-
   if (r.nova) {
     r.aba.getRange(1, 1, r.aba.getMaxRows(), COLUNAS_CHECKLIST.length).setNumberFormat('@');
     r.aba.setColumnWidth(1, 120);
@@ -247,9 +473,22 @@ function comTrava_(fn) {
   }
 }
 
+/** Todas as linhas de dados de uma aba, já com o número da linha. */
+function linhasDe_(aba, largura) {
+  var ultima = aba.getLastRow();
+  if (ultima < 2) return [];
+  return aba.getRange(2, 1, ultima - 1, largura).getValues().map(function (valores, i) {
+    return { linha: i + 2, v: valores };
+  });
+}
+
+function ehDoUsuario_(valores, idxUsuario, usuario) {
+  return normalizarUsuario_(valores[idxUsuario]) === usuario;
+}
+
 
 /* ===========================================================
-   3) CONVERSÃO LINHA <-> OBJETO
+   4) CONVERSÃO LINHA <-> OBJETO
    =========================================================== */
 
 function paraObjeto_(linha) {
@@ -267,11 +506,11 @@ function paraObjeto_(linha) {
   };
 }
 
-function paraLinha_(item) {
+function paraLinha_(item, usuario) {
   return [
     item.id, item.nome, item.grupo, item.dia,
     item.series, item.repeticoes, item.carga,
-    item.obs, item.criadoEm, item.link
+    item.obs, item.criadoEm, item.link, usuario
   ];
 }
 
@@ -292,25 +531,21 @@ function novoId_() {
   return 'ex_' + Utilities.getUuid().replace(/-/g, '').slice(0, 10);
 }
 
-/** Localiza a linha (1-based) de um id. Devolve -1 se não achar. */
-function acharLinha_(aba, id) {
-  var ultima = aba.getLastRow();
-  if (ultima < 2) return -1;
-  var ids = aba.getRange(2, 1, ultima - 1, 1).getValues();
+/** Linha (1-based) do exercício com aquele id E daquele usuário, ou -1. */
+function acharLinhaDoUsuario_(aba, id, usuario) {
   var alvo = String(id).trim();
-  for (var i = 0; i < ids.length; i++) {
-    if (String(ids[i][0]).trim() === alvo) return i + 2;
+  var linhas = linhasDe_(aba, COLUNAS.length);
+  for (var i = 0; i < linhas.length; i++) {
+    if (String(linhas[i].v[0]).trim() === alvo && ehDoUsuario_(linhas[i].v, IDX_USUARIO_EX, usuario)) {
+      return linhas[i].linha;
+    }
   }
   return -1;
 }
 
 
 /* ===========================================================
-   4) A SEMANA CORRENTE
-   O checklist se zera sozinho porque cada marcação guarda a
-   segunda-feira da sua semana. Virou a semana, a chave muda e
-   as marcações antigas simplesmente deixam de ser lidas —
-   mas continuam na planilha como histórico.
+   5) A SEMANA CORRENTE
    =========================================================== */
 
 /** Segunda-feira da semana da data informada. */
@@ -357,7 +592,7 @@ function infoSemana_() {
 
 
 /* ===========================================================
-   5) VALIDAÇÃO (servidor também valida — não confie só no cliente)
+   6) VALIDAÇÃO (servidor também valida — não confie só no cliente)
    =========================================================== */
 
 function validar_(dados) {
@@ -398,36 +633,34 @@ function validar_(dados) {
 
 
 /* ===========================================================
-   6) AS 4 OPERAÇÕES CRUD  (chamadas por google.script.run)
+   7) AS 4 OPERAÇÕES CRUD  (o 1º argumento vem do token)
    =========================================================== */
 
 /** Chamada única de abertura: tudo que o app precisa para desenhar as telas. */
-function carregarDados() {
+function carregarDados(usuario) {
+  var conta = acharUsuario_(usuario);
   return {
+    usuario: usuario,
+    nome: conta ? conta.nome : usuario,
     grupos: GRUPOS,
     treinos: TREINOS,
     diasSemana: DIAS_SEMANA,
-    exercicios: listarExercicios(),
-    agenda: lerAgenda_(),
-    feitos: lerFeitos_(),
+    exercicios: listarExercicios(usuario),
+    agenda: lerAgenda_(usuario),
+    feitos: lerFeitos_(usuario),
     semana: infoSemana_()
   };
 }
 
-/** READ — devolve todos os exercícios da planilha. */
-function listarExercicios() {
-  var aba = getAba_();
-  var ultima = aba.getLastRow();
-  if (ultima < 2) return [];
-
-  return aba.getRange(2, 1, ultima - 1, COLUNAS.length)
-    .getValues()
-    .filter(function (linha) { return String(linha[0]).trim() !== ''; })
-    .map(paraObjeto_);
+/** READ — devolve os exercícios DO USUÁRIO. */
+function listarExercicios(usuario) {
+  return linhasDe_(getAba_(), COLUNAS.length)
+    .filter(function (l) { return String(l.v[0]).trim() !== '' && ehDoUsuario_(l.v, IDX_USUARIO_EX, usuario); })
+    .map(function (l) { return paraObjeto_(l.v); });
 }
 
 /** CREATE — acrescenta uma linha nova e devolve o item salvo. */
-function criarExercicio(dados) {
+function criarExercicio(usuario, dados) {
   var limpo = validar_(dados);
   return comTrava_(function () {
     var aba = getAba_();
@@ -443,17 +676,17 @@ function criarExercicio(dados) {
       criadoEm: agora_(),
       link: limpo.link
     };
-    aba.appendRow(paraLinha_(item));
+    aba.appendRow(paraLinha_(item, usuario));
     return item;
   });
 }
 
-/** UPDATE — reescreve a linha do id informado, preservando id e criadoEm. */
-function atualizarExercicio(id, dados) {
+/** UPDATE — reescreve a linha do id informado (só se for do usuário). */
+function atualizarExercicio(usuario, id, dados) {
   var limpo = validar_(dados);
   return comTrava_(function () {
     var aba = getAba_();
-    var linha = acharLinha_(aba, id);
+    var linha = acharLinhaDoUsuario_(aba, id, usuario);
     if (linha < 0) throw new Error('Exercício não encontrado na planilha.');
 
     var atual = paraObjeto_(aba.getRange(linha, 1, 1, COLUNAS.length).getValues()[0]);
@@ -469,69 +702,71 @@ function atualizarExercicio(id, dados) {
       criadoEm: atual.criadoEm || agora_(),
       link: limpo.link
     };
-    aba.getRange(linha, 1, 1, COLUNAS.length).setValues([paraLinha_(item)]);
+    aba.getRange(linha, 1, 1, COLUNAS.length).setValues([paraLinha_(item, usuario)]);
     return item;
   });
 }
 
-/** DELETE — remove a linha do id informado. */
-function excluirExercicio(id) {
+/** DELETE — remove a linha do id informado (só se for do usuário). */
+function excluirExercicio(usuario, id) {
   return comTrava_(function () {
     var aba = getAba_();
-    var linha = acharLinha_(aba, id);
+    var linha = acharLinhaDoUsuario_(aba, id, usuario);
     if (linha < 0) throw new Error('Exercício não encontrado na planilha.');
     aba.deleteRow(linha);
     return true;
   });
 }
 
-/** Limpa a lista inteira (botão "Apagar todos os dados" do menu). */
-function excluirTodos() {
+/** Apaga TODOS os exercícios do usuário (e só os dele). */
+function excluirTodos(usuario) {
   return comTrava_(function () {
     var aba = getAba_();
-    var ultima = aba.getLastRow();
-    if (ultima > 1) aba.deleteRows(2, ultima - 1);
+    apagarLinhasDoUsuario_(aba, COLUNAS.length, IDX_USUARIO_EX, usuario, function () { return true; });
     return true;
   });
 }
 
-/** Popula a planilha com exemplos (botão do estado vazio). */
-function carregarExemplos() {
+/** Apaga, de baixo para cima, as linhas do usuário que passarem no filtro. */
+function apagarLinhasDoUsuario_(aba, largura, idxUsuario, usuario, filtro) {
+  linhasDe_(aba, largura)
+    .filter(function (l) { return ehDoUsuario_(l.v, idxUsuario, usuario) && filtro(l.v); })
+    .map(function (l) { return l.linha; })
+    .sort(function (a, b) { return b - a; })       // de baixo para cima: os índices não mudam
+    .forEach(function (linha) { aba.deleteRow(linha); });
+}
+
+/** Popula com exemplos (botão do estado vazio). */
+function carregarExemplos(usuario) {
   var exemplos = [
     { nome: 'Supino reto', grupo: 'Peito', dia: 'Treino A', series: 4, repeticoes: 12, carga: 40, obs: 'Aquecer antes', link: 'https://www.youtube.com/watch?v=rT7DgCr-3pg' },
     { nome: 'Agachamento livre', grupo: 'Pernas', dia: 'Treino B', series: 4, repeticoes: 10, carga: 60, obs: '', link: 'https://www.youtube.com/watch?v=SW_C1A-rejs' },
     { nome: 'Puxada frontal', grupo: 'Costas', dia: 'Treino C', series: 3, repeticoes: 12, carga: 50, obs: 'Pegada aberta', link: '' }
   ];
-  exemplos.forEach(function (exemplo) { criarExercicio(exemplo); });
-  return listarExercicios();
+  exemplos.forEach(function (exemplo) { criarExercicio(usuario, exemplo); });
+  return listarExercicios(usuario);
 }
 
 
 /* ===========================================================
-   7) AGENDA DA SEMANA
-   Cada dia da semana aponta para um dos treinos do cadastro
-   (ou fica vazio = Descanso). Os exercícios do dia saem de
-   graça: são os que têm aquele "Treino" no cadastro.
+   8) AGENDA DA SEMANA (por usuário)
    =========================================================== */
 
 /** Devolve { Segunda: 'Treino A', Terça: '', ... } com os 7 dias sempre presentes. */
-function lerAgenda_() {
-  var aba = getAbaAgenda_();
+function lerAgenda_(usuario) {
   var mapa = {};
   DIAS_SEMANA.forEach(function (dia) { mapa[dia] = ''; });
 
-  var ultima = aba.getLastRow();
-  if (ultima < 2) return mapa;
-
-  aba.getRange(2, 1, ultima - 1, COLUNAS_AGENDA.length).getValues().forEach(function (linha) {
-    var dia = String(linha[0]).trim();
-    if (mapa.hasOwnProperty(dia)) mapa[dia] = String(linha[1]).trim();
+  linhasDe_(getAbaAgenda_(), COLUNAS_AGENDA.length).forEach(function (l) {
+    if (!ehDoUsuario_(l.v, IDX_USUARIO_AGENDA, usuario)) return;
+    var dia = String(l.v[0]).trim();
+    if (mapa.hasOwnProperty(dia)) mapa[dia] = String(l.v[1]).trim();
   });
   return mapa;
 }
 
 /** Define (ou limpa) o treino de um dia da semana. */
-function salvarAgenda(dia, treino) {
+function salvarAgenda(usuario, dia, treino) {
   dia = String(dia == null ? '' : dia).trim();
   treino = String(treino == null ? '' : treino).trim();
 
@@ -540,144 +775,204 @@ function salvarAgenda(dia, treino) {
 
   return comTrava_(function () {
     var aba = getAbaAgenda_();
-    var ultima = aba.getLastRow();
-    var linha = -1;
+    var existente = linhasDe_(aba, COLUNAS_AGENDA.length).filter(function (l) {
+      return String(l.v[0]).trim() === dia && ehDoUsuario_(l.v, IDX_USUARIO_AGENDA, usuario);
+    })[0];
 
-    if (ultima >= 2) {
-      var dias = aba.getRange(2, 1, ultima - 1, 1).getValues();
-      for (var i = 0; i < dias.length; i++) {
-        if (String(dias[i][0]).trim() === dia) { linha = i + 2; break; }
-      }
-    }
-
-    if (linha < 0) aba.appendRow([dia, treino]);
-    else aba.getRange(linha, 2).setValue(treino);
+    if (existente) aba.getRange(existente.linha, 2).setValue(treino);
+    else aba.appendRow([dia, treino, usuario]);
 
     // Virou Descanso: a marcação de "feito" daquele dia perde o sentido
-    if (!treino) desmarcarSemTrava_(dia);
+    if (!treino) desmarcarSemTrava_(usuario, dia);
 
-    return { agenda: lerAgenda_(), feitos: lerFeitos_() };
+    return { agenda: lerAgenda_(usuario), feitos: lerFeitos_(usuario) };
   });
 }
 
 
 /* ===========================================================
-   8) CHECKLIST DA SEMANA
+   9) CHECKLIST DA SEMANA (por usuário)
    Existir uma linha = aquele dia daquela semana foi feito.
-   Desmarcar apaga a linha. Semanas anteriores ficam guardadas.
    =========================================================== */
 
-/** Todas as linhas (1-based) que marcam aquele dia naquela semana. */
-function acharMarcas_(aba, semana, dia) {
-  var ultima = aba.getLastRow();
-  if (ultima < 2) return [];
-
-  var valores = aba.getRange(2, 1, ultima - 1, 2).getValues();
-  var linhas = [];
-  for (var i = 0; i < valores.length; i++) {
-    if (chaveDaCelula_(valores[i][0]) === semana &&
-        String(valores[i][1]).trim() === dia) {
-      linhas.push(i + 2);
-    }
-  }
-  return linhas;
+/** Todas as linhas (1-based) que marcam aquele dia naquela semana para o usuário. */
+function acharMarcas_(aba, semana, dia, usuario) {
+  return linhasDe_(aba, COLUNAS_CHECKLIST.length)
+    .filter(function (l) {
+      return chaveDaCelula_(l.v[0]) === semana &&
+        String(l.v[1]).trim() === dia &&
+        ehDoUsuario_(l.v, IDX_USUARIO_CHECKLIST, usuario);
+    })
+    .map(function (l) { return l.linha; });
 }
 
-/** Dias já concluídos NESTA semana, ex.: ['Segunda', 'Quarta']. */
-function lerFeitos_() {
-  var aba = getAbaChecklist_();
+/** Dias já concluídos NESTA semana pelo usuário, ex.: ['Segunda', 'Quarta']. */
+function lerFeitos_(usuario) {
   var semana = chaveSemana_();
-  var ultima = aba.getLastRow();
-  if (ultima < 2) return [];
-
   var vistos = {};
-  return aba.getRange(2, 1, ultima - 1, 2).getValues()
-    .filter(function (linha) { return chaveDaCelula_(linha[0]) === semana; })
-    .map(function (linha) { return String(linha[1]).trim(); })
+  return linhasDe_(getAbaChecklist_(), COLUNAS_CHECKLIST.length)
+    .filter(function (l) { return chaveDaCelula_(l.v[0]) === semana && ehDoUsuario_(l.v, IDX_USUARIO_CHECKLIST, usuario); })
+    .map(function (l) { return String(l.v[1]).trim(); })
     .filter(function (dia) {
-      // Sem repetidos: uma planilha antiga pode ter linhas duplicadas
-      if (DIAS_SEMANA.indexOf(dia) < 0 || vistos[dia]) return false;
+      if (DIAS_SEMANA.indexOf(dia) < 0 || vistos[dia]) return false;   // sem repetidos
       vistos[dia] = true;
       return true;
     });
 }
 
-function marcarSemTrava_(dia) {
+function marcarSemTrava_(usuario, dia) {
   var aba = getAbaChecklist_();
   var semana = chaveSemana_();
-  if (acharMarcas_(aba, semana, dia).length > 0) return;   // já estava marcado
+  if (acharMarcas_(aba, semana, dia, usuario).length > 0) return;   // já estava marcado
 
-  aba.appendRow([semana, dia, agora_()]);
-
+  aba.appendRow([semana, dia, agora_(), usuario]);
   // Trava a coluna da semana como TEXTO, para o Sheets não reinterpretar
   // '2026-08-24' como data na próxima leitura.
   aba.getRange(aba.getLastRow(), 1).setNumberFormat('@');
 }
 
-function desmarcarSemTrava_(dia) {
+function desmarcarSemTrava_(usuario, dia) {
   var aba = getAbaChecklist_();
-  var linhas = acharMarcas_(aba, chaveSemana_(), dia);
-  // De baixo para cima: apagar de cima muda o número das linhas de baixo
-  linhas.sort(function (a, b) { return b - a; })
+  acharMarcas_(aba, chaveSemana_(), dia, usuario)
+    .sort(function (a, b) { return b - a; })
     .forEach(function (linha) { aba.deleteRow(linha); });
 }
 
 /** Marca ou desmarca um dia da semana atual. Devolve a lista atualizada. */
-function marcarDia(dia, feito) {
+function marcarDia(usuario, dia, feito) {
   dia = String(dia == null ? '' : dia).trim();
   if (DIAS_SEMANA.indexOf(dia) < 0) throw new Error('Dia da semana inválido.');
 
   return comTrava_(function () {
-    if (feito) marcarSemTrava_(dia);
-    else desmarcarSemTrava_(dia);
-    return lerFeitos_();
+    if (feito) marcarSemTrava_(usuario, dia);
+    else desmarcarSemTrava_(usuario, dia);
+    return lerFeitos_(usuario);
   });
 }
 
 /** Limpa as marcações só da semana atual (botão "Reiniciar semana"). */
-function reiniciarSemana() {
+function reiniciarSemana(usuario) {
   return comTrava_(function () {
-    DIAS_SEMANA.forEach(desmarcarSemTrava_);
-    return lerFeitos_();
+    DIAS_SEMANA.forEach(function (dia) { desmarcarSemTrava_(usuario, dia); });
+    return lerFeitos_(usuario);
   });
 }
 
 
 /* ===========================================================
-   9) TESTE RÁPIDO NO EDITOR
-   Selecione a função e clique em Executar.
+   10) MIGRAÇÃO: dar dono às linhas antigas
+   Uma planilha de antes do login tem linhas sem a coluna
+   "usuario". Elas ficam invisíveis para todo mundo até alguém
+   adotá-las.
    =========================================================== */
 
+/** Carimba o usuário em toda linha que ainda não tem dono. Devolve quantas. */
+function adotarRegistrosSemDono_(usuario) {
+  usuario = normalizarUsuario_(usuario);
+  if (!acharUsuario_(usuario)) throw new Error('Usuário "' + usuario + '" não existe. Cadastre-o primeiro.');
+
+  var abas = [
+    { aba: getAba_(), largura: COLUNAS.length, idx: IDX_USUARIO_EX },
+    { aba: getAbaAgenda_(), largura: COLUNAS_AGENDA.length, idx: IDX_USUARIO_AGENDA },
+    { aba: getAbaChecklist_(), largura: COLUNAS_CHECKLIST.length, idx: IDX_USUARIO_CHECKLIST }
+  ];
+
+  return comTrava_(function () {
+    var total = 0;
+    abas.forEach(function (cfg) {
+      linhasDe_(cfg.aba, cfg.largura).forEach(function (l) {
+        var temDados = String(l.v[0]).trim() !== '';
+        var semDono = String(l.v[cfg.idx] == null ? '' : l.v[cfg.idx]).trim() === '';
+        if (temDados && semDono) {
+          cfg.aba.getRange(l.linha, cfg.idx + 1).setValue(usuario);
+          total++;
+        }
+      });
+    });
+    return total;
+  });
+}
+
+
+/* ===========================================================
+   11) FUNÇÕES PARA VOCÊ RODAR NO EDITOR
+   Selecione a função na barra do topo e clique em Executar.
+   =========================================================== */
+
+/**
+ * PASSO 1 — Crie as contas.
+ * Edite a lista abaixo, rode a função UMA vez e depois APAGUE AS SENHAS
+ * daqui: elas não devem ficar gravadas no código.
+ */
+function cadastrarUsuarios() {
+  var contas = [
+    { usuario: 'marcelo', senha: 'troque-esta-senha', nome: 'Marcelo' },
+    { usuario: 'namorada', senha: 'troque-esta-senha', nome: 'Nome dela' }
+  ];
+
+  contas.forEach(function (c) {
+    if (c.senha === 'troque-esta-senha') {
+      Logger.log('PULEI "%s": troque a senha de exemplo antes de rodar.', c.usuario);
+      return;
+    }
+    try {
+      criarUsuario_(c.usuario, c.senha, c.nome);
+      Logger.log('Criado: %s (%s)', c.usuario, c.nome);
+    } catch (erro) {
+      Logger.log('Erro em "%s": %s', c.usuario, erro.message);
+    }
+  });
+}
+
+/**
+ * PASSO 2 — Dê dono aos exercícios que já existiam antes do login.
+ * Troque 'marcelo' pelo SEU usuário e rode uma vez.
+ */
+function adotarMeusRegistros() {
+  var MEU_USUARIO = 'marcelo';
+  var quantas = adotarRegistrosSemDono_(MEU_USUARIO);
+  Logger.log('%s linha(s) agora pertencem a "%s".', quantas, MEU_USUARIO);
+}
+
+/** Primeiro usuário cadastrado — usado só pelos testes abaixo. */
+function usuarioParaTeste_() {
+  var aba = getAbaUsuarios_();
+  if (aba.getLastRow() < 2) throw new Error('Cadastre um usuário primeiro (função cadastrarUsuarios).');
+  return normalizarUsuario_(aba.getRange(2, 1).getValue());
+}
+
 function testarCRUD() {
-  var criado = criarExercicio({
+  var u = usuarioParaTeste_();
+  var criado = criarExercicio(u, {
     nome: 'TESTE — remover', grupo: 'Peito', dia: 'Treino A',
     series: 3, repeticoes: 10, carga: 20, obs: 'registro de teste',
     link: 'https://www.youtube.com/watch?v=teste'
   });
   Logger.log('CREATE -> %s', JSON.stringify(criado));
 
-  Logger.log('READ   -> %s registro(s)', listarExercicios().length);
+  Logger.log('READ   -> %s registro(s) de %s', listarExercicios(u).length, u);
 
-  var alterado = atualizarExercicio(criado.id, {
+  var alterado = atualizarExercicio(u, criado.id, {
     nome: 'TESTE — alterado', grupo: 'Costas', dia: 'Treino B',
     series: 4, repeticoes: 12, carga: 35, obs: 'atualizado', link: ''
   });
   Logger.log('UPDATE -> %s', JSON.stringify(alterado));
 
-  excluirExercicio(criado.id);
-  Logger.log('DELETE -> ok. Sobraram %s registro(s).', listarExercicios().length);
+  excluirExercicio(u, criado.id);
+  Logger.log('DELETE -> ok. Sobraram %s registro(s).', listarExercicios(u).length);
 }
 
 function testarAgenda() {
+  var u = usuarioParaTeste_();
   Logger.log('Semana  -> %s', JSON.stringify(infoSemana_()));
 
-  salvarAgenda('Segunda', 'Treino A');
-  salvarAgenda('Quarta', 'Treino B');
-  Logger.log('AGENDA  -> %s', JSON.stringify(lerAgenda_()));
+  salvarAgenda(u, 'Segunda', 'Treino A');
+  salvarAgenda(u, 'Quarta', 'Treino B');
+  Logger.log('AGENDA  -> %s', JSON.stringify(lerAgenda_(u)));
 
-  marcarDia('Segunda', true);
-  Logger.log('MARCOU  -> %s', JSON.stringify(lerFeitos_()));
+  marcarDia(u, 'Segunda', true);
+  Logger.log('MARCOU  -> %s', JSON.stringify(lerFeitos_(u)));
 
-  marcarDia('Segunda', false);
-  Logger.log('DESMARCA-> %s', JSON.stringify(lerFeitos_()));
+  marcarDia(u, 'Segunda', false);
+  Logger.log('DESMARCA-> %s', JSON.stringify(lerFeitos_(u)));
 }
